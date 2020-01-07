@@ -25,25 +25,13 @@ from cam.sgnmt import utils
 from cam.sgnmt.decoding.core import Decoder, PartialHypothesis
 
 
-class AstarDecoder(Decoder):
-    """This decoder implements A*. For heuristics, see the the 
-    ``decoding.core`` module for interfaces and the general handling of
-    heuristics, and the ``decoding.heuristics`` package for heuristic
-    implementations. This A* implementation does not have a 'closed
-    set', i.e. we do not keep track of already visited states. Make 
-    sure that your search space is acyclic (normally it is unless you
-    decode on cyclic lattices with the fst predictor.
-    """
+class DijkstraDecoder(Decoder):
     
     def __init__(self, decoder_args):
         """Creates a new A* decoder instance. The following values are
         fetched from `decoder_args`:
         
             beam (int): Maximum number of active hypotheses.
-            pure_heuristic_scores (bool): For standard A* set this to
-                                          false. If set to true, partial
-                                          hypo scores are ignored when
-                                          scoring hypotheses.
             early_stopping (bool): If this is true, partial hypotheses
                                    with score worse than the current
                                    best complete scores are not
@@ -61,23 +49,17 @@ class AstarDecoder(Decoder):
             decoder_args (object): Decoder configuration passed through
                                    from the configuration API.
         """
-        super(AstarDecoder, self).__init__(decoder_args)
+        super(DijkstraDecoder, self).__init__(decoder_args)
         self.nbest = max(1, decoder_args.nbest)
         self.capacity = decoder_args.beam
-        self.early_stopping = decoder_args.early_stopping
-        self.pure_heuristic_scores = decoder_args.pure_heuristic_scores
-
-    def _get_combined_score(self, hypo):
-        est_score = -self.estimate_future_cost(hypo)
-        if not self.pure_heuristic_scores:
-            return est_score + hypo.score
-        return est_score        
+        self.early_stopping = decoder_args.early_stopping    
 
     def decode(self, src_sentence):
         """Decodes a single source sentence using A* search. """
         self.initialize_predictors(src_sentence)
         open_set = []
         best_score = self.get_lower_score_bound()
+        print("Bound:", best_score)
         heappush(open_set, (0.0,
                             PartialHypothesis(self.get_predictor_states())))
         while open_set:
@@ -110,8 +92,10 @@ class AstarDecoder(Decoder):
             for trgt_word in posterior: # Estimate future cost, add to heap
                 next_hypo = hypo.cheap_expand(trgt_word, posterior[trgt_word],
                                                   score_breakdown[trgt_word])
-                combined_score = self._get_combined_score(next_hypo)
-                heappush(open_set, (-combined_score, next_hypo))
+                score = next_hypo.score
+                if score > best_score:
+                  # only push if hypothesis can beat lower bound. Saves memory...
+                  heappush(open_set, (-score, next_hypo))
                   
             # Limit heap capacity
             if self.capacity > 0 and len(open_set) > self.capacity:

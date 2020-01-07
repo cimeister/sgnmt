@@ -29,6 +29,7 @@ import logging
 import os
 import sys
 from cmd import Cmd
+import time
 
 from cam.sgnmt import utils, io
 from cam.sgnmt import decode_utils
@@ -107,10 +108,12 @@ outputs = decode_utils.create_output_handlers()
 
 if args.input_method == 'file':
     if os.access(args.src_test, os.R_OK):
+        print(time.time())
         with open(args.src_test) as f:
             decode_utils.do_decode(decoder,
                                    outputs,
                                    [line.strip() for line in f])
+        print(time.time())
     else:
         logging.fatal("Input file '%s' not readable. Please double-check the "
                       "src_test option or choose an alternative input_method."

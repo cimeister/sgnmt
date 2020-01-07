@@ -27,16 +27,12 @@ import os
 from cam.sgnmt import utils
 from cam.sgnmt.predictors.core import Predictor
 
+from fairseq import checkpoint_utils, options, tasks
+from fairseq import utils as fairseq_utils
+from fairseq.sequence_generator import EnsembleModel
+import torch
+import numpy as np
 
-try:
-    # Requires fairseq
-    from fairseq import checkpoint_utils, options, tasks
-    from fairseq import utils as fairseq_utils
-    from fairseq.sequence_generator import EnsembleModel
-    import torch
-    import numpy as np
-except ImportError:
-    pass # Deal with it in decode.py
 
 
 FAIRSEQ_INITIALIZED = False
@@ -52,11 +48,20 @@ def _initialize_fairseq(user_dir):
             fairseq_utils.import_user_module(args)
         FAIRSEQ_INITIALIZED = True
 
+def get_fairseq_args(model_path, lang_pair):
+    parser = options.get_generation_parser()
+    input_args = ["--path", model_path, os.path.dirname(model_path)]
+    if lang_pair:
+        src, trg = lang_pair.split("-")
+        input_args.extend(["--source-lang", src, "--target-lang", trg])
+    return options.parse_args_and_arch(parser, input_args)
+
 
 class FairseqPredictor(Predictor):
     """Predictor for using fairseq models."""
 
-    def __init__(self, model_path, user_dir, lang_pair, n_cpu_threads=-1):
+    def __init__(self, model_path, user_dir, lang_pair, n_cpu_threads=-1, 
+        subtract_uni=False, subtract_marg=False, marg_path=None, lmbda=0):
         """Initializes a fairseq predictor.
 
         Args:
@@ -71,36 +76,64 @@ class FairseqPredictor(Predictor):
         _initialize_fairseq(user_dir)
         self.use_cuda = torch.cuda.is_available() and n_cpu_threads < 0
 
-        parser = options.get_generation_parser()
-        input_args = ["--path", model_path, os.path.dirname(model_path)]
-        if lang_pair:
-            src, trg = lang_pair.split("-")
-            input_args.extend(["--source-lang", src, "--target-lang", trg])
-        args = options.parse_args_and_arch(parser, input_args)
+        args = get_fairseq_args(model_path, lang_pair)
 
         # Setup task, e.g., translation
         task = tasks.setup_task(args)
-        self.src_vocab_size = len(task.source_dictionary)
-        self.trg_vocab_size = len(task.target_dictionary)
-        self.pad_id = task.source_dictionary.pad()
+        source_dict = task.source_dictionary
+        target_dict = task.target_dictionary
+        self.src_vocab_size = len(source_dict)
+        self.trg_vocab_size = len(target_dict)
+        self.pad_id = target_dict.pad()
+        self.eos_id = target_dict.eos()
+        self.unk_id = target_dict.unk()
+         # Load ensemble
+        self.models = self.load_models(model_path, task)
+        self.model = EnsembleModel(self.models)
+        self.model.eval()
 
-        # Load ensemble
+
+        assert not subtract_marg & subtract_uni
+        self.use_uni_dist = subtract_uni
+        self.use_marg_dist = subtract_marg
+        self.lmbda = lmbda
+        if self.use_uni_dist:
+            unigram_dist = torch.Tensor(target_dict.count)
+            #change frequency of eos to frequency of '.' so it's more realistic.
+            unigram_dist[self.eos_id] = unigram_dist[target_dict.index('.')]
+            self.log_uni_dist = unigram_dist.cuda() if self.use_cuda else unigram_dist
+            self.log_uni_dist = (self.log_uni_dist/self.log_uni_dist.sum()).log()
+        if self.use_marg_dist:
+            if not marg_path:
+                raise AttributeError("No path (--marg_path) given for marginal model when --subtract_marg used")
+            args = get_fairseq_args(marg_path, lang_pair)
+
+            # Setup task, e.g., translation
+            task = tasks.setup_task(args)
+            assert source_dict == task.source_dictionary
+            assert target_dict == task.target_dictionary
+             # Load ensemble
+            self.marg_models = self.load_models(marg_path, task)
+            self.marg_model = EnsembleModel(self.marg_models)
+            self.marg_model.eval()
+
+
+    def load_models(self, model_path, task):
         logging.info('Loading fairseq model(s) from {}'.format(model_path))
-        self.models, _ = checkpoint_utils.load_model_ensemble(
+        models, _ = checkpoint_utils.load_model_ensemble(
             model_path.split(':'),
             task=task,
         )
 
         # Optimize ensemble for generation
-        for model in self.models:
+        for model in models:
             model.make_generation_fast_(
                 beamable_mm_beam_size=1,
                 need_attn=False,
             )
             if self.use_cuda:
                 model.cuda()
-        self.model = EnsembleModel(self.models)
-        self.model.eval()
+        return models
 
     def get_unk_probability(self, posterior):
         """Fetch posterior[utils.UNK_ID]"""
@@ -108,11 +141,22 @@ class FairseqPredictor(Predictor):
                 
     def predict_next(self):
         """Call the fairseq model."""
+        inputs = torch.LongTensor([self.consumed])
+        if self.use_cuda:
+            inputs = inputs.cuda()
         lprobs, _ = self.model.forward_decoder(
-            torch.LongTensor([self.consumed]), self.encoder_outs
+            inputs, self.encoder_outs
         )
         lprobs[0, self.pad_id] = utils.NEG_INF
-        return np.array(lprobs[0])
+        if self.use_uni_dist:
+            lprobs[0] = lprobs[0] - self.lmbda*self.log_uni_dist
+        if self.use_marg_dist:
+            marg_lprobs, _ = self.marg_model.forward_decoder(
+                inputs, self.marg_encoder_outs
+            )
+            lprobs[0] = lprobs[0] - self.lmbda*marg_lprobs[0]
+
+        return lprobs[0] if self.use_cuda else np.array(lprobs[0])
     
     def initialize(self, src_sentence):
         """Initialize source tensors, reset consumed."""
@@ -131,11 +175,47 @@ class FairseqPredictor(Predictor):
         # Reset incremental states
         for model in self.models:
             self.model.incremental_states[model] = {}
+        if self.use_marg_dist:
+            self.initialize_marg()
+
+    def initialize_marg(self):
+        """Initialize source tensors, reset consumed."""
+        src_tokens = torch.LongTensor([
+            utils.oov_to_unk([utils.EOS_ID],
+                             self.src_vocab_size)])
+        src_lengths = torch.LongTensor([1])
+        if self.use_cuda:
+            src_tokens = src_tokens.cuda()
+            src_lengths = src_lengths.cuda()
+        self.marg_encoder_outs = self.marg_model.forward_encoder({
+            'src_tokens': src_tokens,
+            'src_lengths': src_lengths})
+        # Reset incremental states
+        for model in self.marg_models:
+            self.marg_model.incremental_states[model] = {}
    
     def consume(self, word):
         """Append ``word`` to the current history."""
         self.consumed.append(word)
     
+    def get_empty_str_prob(self):
+        inputs = torch.LongTensor([[utils.GO_ID or utils.EOS_ID]])
+        if self.use_cuda:
+            inputs = inputs.cuda()
+        
+        lprobs, _ = self.model.forward_decoder(
+            inputs, self.encoder_outs
+        )
+        if self.use_uni_dist:
+            lprobs[0] = lprobs[0] - self.lmbda*self.log_uni_dist
+        if self.use_marg_dist:
+            lprobs_marg, _ = self.marg_model.forward_decoder(
+            inputs, self.marg_encoder_outs)
+            return (lprobs[0,self.eos_id] - self.lmbda*lprobs_marg[0,self.eos_id]).item()
+            
+        return lprobs[0,self.eos_id].item()
+
+
     def get_state(self):
         """The predictor state is the complete history."""
         return self.consumed, [self.model.incremental_states[m] 

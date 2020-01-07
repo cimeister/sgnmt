@@ -17,3 +17,7 @@ dist/
 *.sublime-project
 *.sublime-workspace
 
+*.out
+*.txt
+!dict.*.txt
+*.pt

@@ -79,6 +79,8 @@ class PartialHypothesis(object):
         self.score = 0.0
         self.score_breakdown = []
         self.word_to_consume = None
+    def __lt__(self, other):
+        return id(self) < id(other)
     
     def get_last_word(self):
         """Get the last word in the translation prefix. """
@@ -875,7 +877,7 @@ class Decoder(Observable):
         """ 
         if self.current_sen_id < len(self.lower_bounds):
             return self.lower_bounds[self.current_sen_id] - EPS_P
-        return NEG_INF    
+        return max(NEG_INF, self.predictors[0][0].get_empty_str_prob())   
     
     def get_max_expansions(self, max_expansions_param, src_sentence):
         """This is a helper for decoders which support the 

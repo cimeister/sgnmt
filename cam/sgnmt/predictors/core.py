@@ -140,6 +140,10 @@ class Predictor(Observer):
             float: Score to use for words outside ``posterior``
         """
         return NEG_INF
+
+    def get_empty_str_prob(self):
+       
+        return NEG_INF
     
     def initialize(self, src_sentence):
         """Initialize the predictor with the given source sentence. 

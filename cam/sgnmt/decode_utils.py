@@ -43,6 +43,7 @@ from cam.sgnmt.decoding.bigramgreedy import BigramGreedyDecoder
 from cam.sgnmt.decoding.bucket import BucketDecoder
 from cam.sgnmt.decoding.core import UnboundedVocabularyPredictor
 from cam.sgnmt.decoding.core import Hypothesis
+from cam.sgnmt.decoding.dijkstra import DijkstraDecoder
 from cam.sgnmt.decoding.dfs import DFSDecoder, \
                                    SimpleDFSDecoder, \
                                    SimpleLengthDFSDecoder
@@ -323,7 +324,11 @@ def add_predictors(decoder):
                 p = FairseqPredictor(_get_override_args("fairseq_path"),
                                      args.fairseq_user_dir,
                                      args.fairseq_lang_pair,
-                                     args.n_cpu_threads)
+                                     args.n_cpu_threads,
+                                     args.subtract_uni,
+                                     args.subtract_marg,
+                                     _get_override_args("marg_path"),
+                                     args.lmbda)
             elif pred == "bracket":
                 p = BracketPredictor(args.syntax_max_terminal_id,
                                      args.syntax_pop_id,
@@ -644,6 +649,8 @@ def create_decoder():
                                     args.collect_statistics)
         elif args.decoder == "astar":
             decoder = AstarDecoder(args)
+        elif args.decoder == "dijkstra":
+            decoder = DijkstraDecoder(args)
         else:
             logging.fatal("Decoder %s not available. Please double-check the "
                           "--decoder parameter." % args.decoder)
@@ -893,6 +900,9 @@ def do_decode(decoder,
     start_time = time.time()
     logging.info("Start time: %s" % start_time)
     sen_indices = []
+    empty_time = 0
+    sent_time = 0
+    empty_sents = 0
     for sen_idx in get_sentence_indices(args.range, src_sentences):
         decoder.set_current_sen_id(sen_idx)
         try:
@@ -911,7 +921,11 @@ def do_decode(decoder,
                          "time=%.2f" % (sen_idx+1,
                                         decoder.apply_predictors_count,
                                         time.time() - start_hypo_time))
+                empty_time += time.time() - start_hypo_time
+                empty_sents += 1
                 hypos = [_generate_dummy_hypo(decoder.predictors)]
+            else:
+                sent_time += time.time() - start_hypo_time
             hypos = _postprocess_complete_hypos(hypos)
             logging.info("Decoded (ID: %d): %s" % (
                     sen_idx+1,
@@ -948,6 +962,9 @@ def do_decode(decoder,
                                                        sen_idx+1,
                                                        e,
                                                        traceback.format_exc()))
+    print(empty_sents)
+    print(empty_time)
+    print(sent_time)
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
     try:
         for output_handler in output_handlers:
