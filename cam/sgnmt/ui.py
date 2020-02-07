@@ -276,7 +276,8 @@ def get_parser():
                                  'bucket',
                                  'bigramgreedy',
                                  'astar',
-                                 'dijkstra'],
+                                 'dijkstra',
+                                 'dijkstra_ts'],
                         help="Strategy for traversing the search space which "
                         "is spanned by the predictors.\n\n"
                         "* 'greedy': Greedy decoding (similar to beam=1)\n"
@@ -326,7 +327,7 @@ def get_parser():
                         "Do not use bow predictor with this search strategy.\n"
                         "* 'astar': A* search. The heuristic function is "
                         "configured using the --heuristics options.")
-    group.add_argument("--beam", default=0, type=int,
+    group.add_argument("--beam", default=10, type=int,
                         help="Size of beam. Only used if --decoder is set to "
                         "'beam' or 'astar'. For 'astar' it limits the capacity"
                         " of the queue. Use --beam 0 for unlimited capacity.")
@@ -352,7 +353,7 @@ def get_parser():
                         "expansions is this times the length of the source "
                         "sentence. Supporting decoders:\n"
                         "bigramgreedy, bow, bucket, dfs, flip, restarting")
-    group.add_argument("--max_len_factor", default=2, type=int,
+    group.add_argument("--max_len_factor", default=2.0, type=float,
                         help="Limits the length of hypotheses to avoid "
                         "infinity loops in search strategies for unbounded "
                         "search spaces. The length of any translation is "
@@ -420,7 +421,7 @@ def get_parser():
                         "A* score hypotheses with the sum of the partial hypo "
                         "score plus the heuristic estimates (lik in standard "
                         "A*). Set to true to use the heuristic estimates only")
-    group.add_argument("--lmbda", default=1.0, type=float,
+    group.add_argument("--lmbda", default=0., type=float,
                         help="weight of LM when decoding with PMI. Should be "
                         "between 0 and 1.0")
     group.add_argument("--restarting_node_score", default="difference",
@@ -565,6 +566,16 @@ def get_parser():
     group.add_argument("--marg_path", default="",
                        help="Points to the model file (*.pt) for the marginal "
                        "predictor. Like --path in fairseq-interactive.")
+    group.add_argument("--ppmi", action='store_true',
+                        help="If this is set to true, subtract the marginal"
+                        " distribution at each time step during decoding")
+    group.add_argument("--reward_coefficient", default=1.3, type=float,
+                        help="")
+    group.add_argument("--reward_type", default=None,
+                        choices=['bounded','max', None],
+                        help="")
+    group.add_argument("--epsilon", default=20.0, type=float,
+                        help="give positive value")
 
     ## Output options
     group = parser.add_argument_group('Output options')
@@ -629,7 +640,7 @@ def get_parser():
                         "with original default values (removing </w>, using @@"
                         " separator)\n")
     group.add_argument("--postprocessing", default="id",
-                        choices=['id','word', 'bpe@@','wmap', 'char', 'subword_nmt'],
+                        choices=['id','word', 'bpe@@','wmap', 'char', 'subword_nmt', 'bart'],
                         help="Postprocessing strategy for output sentences. "
                         "See --preprocessing for more.")
     group.add_argument("--bpe_codes", default="",

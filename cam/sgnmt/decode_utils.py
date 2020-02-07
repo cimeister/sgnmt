@@ -44,6 +44,7 @@ from cam.sgnmt.decoding.bucket import BucketDecoder
 from cam.sgnmt.decoding.core import UnboundedVocabularyPredictor
 from cam.sgnmt.decoding.core import Hypothesis
 from cam.sgnmt.decoding.dijkstra import DijkstraDecoder
+from cam.sgnmt.decoding.dijkstra_time_sync import DijkstraTSDecoder
 from cam.sgnmt.decoding.dfs import DFSDecoder, \
                                    SimpleDFSDecoder, \
                                    SimpleLengthDFSDecoder
@@ -328,7 +329,9 @@ def add_predictors(decoder):
                                      args.subtract_uni,
                                      args.subtract_marg,
                                      _get_override_args("marg_path"),
-                                     args.lmbda)
+                                     args.lmbda,
+                                     args.ppmi,
+                                     args.epsilon)
             elif pred == "bracket":
                 p = BracketPredictor(args.syntax_max_terminal_id,
                                      args.syntax_pop_id,
@@ -651,6 +654,8 @@ def create_decoder():
             decoder = AstarDecoder(args)
         elif args.decoder == "dijkstra":
             decoder = DijkstraDecoder(args)
+        elif args.decoder == "dijkstra_ts":
+            decoder = DijkstraTSDecoder(args)
         else:
             logging.fatal("Decoder %s not available. Please double-check the "
                           "--decoder parameter." % args.decoder)
@@ -900,20 +905,29 @@ def do_decode(decoder,
     start_time = time.time()
     logging.info("Start time: %s" % start_time)
     sen_indices = []
-    empty_time = 0
-    sent_time = 0
-    empty_sents = 0
+    counts = []
     for sen_idx in get_sentence_indices(args.range, src_sentences):
         decoder.set_current_sen_id(sen_idx)
+        if sen_idx >= 1000:
+            print(counts)
+            print(sum(counts))
+            break
         try:
             src = "0" if src_sentences is False else src_sentences[sen_idx]
-            logging.info("Next sentence (ID: %d): %s" % (sen_idx + 1, src))
+            if len(src.split()) > 1000:
+                print("Skipping ID", str(sen_idx), ". Too long...")
+                continue
+            src_print = io.src_sentence(src)
+            logging.info("Next sentence (ID: %d): %s" % (sen_idx + 1, src_print))
             src = _apply_per_sentence_predictor_weights(src, decoder)
             src = io.encode(src)
             start_hypo_time = time.time()
             decoder.apply_predictors_count = 0
-            hypos = [hypo for hypo in decoder.decode(src)
-                        if hypo.total_score > args.min_score]
+            hypos, count = decoder.decode(src)
+            counts.append(count)
+            #hypos = [hypo for hypo in decoder.decode(src)
+                        #if hypo.total_score > args.min_score]
+            
             if not hypos:
                 logging.error("No translation found for ID %d!" % (sen_idx+1))
                 logging.info("Stats (ID: %d): score=<not-found> "
@@ -921,11 +935,8 @@ def do_decode(decoder,
                          "time=%.2f" % (sen_idx+1,
                                         decoder.apply_predictors_count,
                                         time.time() - start_hypo_time))
-                empty_time += time.time() - start_hypo_time
-                empty_sents += 1
                 hypos = [_generate_dummy_hypo(decoder.predictors)]
-            else:
-                sent_time += time.time() - start_hypo_time
+            
             hypos = _postprocess_complete_hypos(hypos)
             logging.info("Decoded (ID: %d): %s" % (
                     sen_idx+1,
@@ -962,9 +973,7 @@ def do_decode(decoder,
                                                        sen_idx+1,
                                                        e,
                                                        traceback.format_exc()))
-    print(empty_sents)
-    print(empty_time)
-    print(sent_time)
+    print(sum(counts))
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
     try:
         for output_handler in output_handlers:

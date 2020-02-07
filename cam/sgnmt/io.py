@@ -25,6 +25,7 @@ import logging
 from cam.sgnmt import utils
 import codecs
 import re
+import os
 
 
 def encode(src_sentence):
@@ -89,6 +90,9 @@ def initialize(args):
         decoder = IDDecoder()
     elif args.postprocessing == "word":
         decoder = WordDecoder()
+    elif args.postprocessing == "bart":
+        load_bart_decoder(args.fairseq_path)
+        decoder = BartDecoder()
     elif args.postprocessing == "char":
         decoder = CharDecoder()
     elif args.postprocessing == "bpe":
@@ -171,6 +175,12 @@ class WordDecoder(Decoder):
 
     def decode(self, trg_sentence):
         return " ".join(trg_wmap.get(w, "<UNK>") for w in trg_sentence)
+
+class BartDecoder(Decoder):
+    """"Decoder for word based mapping."""
+
+    def decode(self, trg_sentence):
+        return bart.decode(" ".join(trg_wmap.get(w, "<UNK>") for w in trg_sentence))
 
 
 class CharEncoder(Encoder):
@@ -381,7 +391,10 @@ src_wmap = {}
 trg_wmap = {}
 """Target language word map (id -> word)"""
 
-
+def src_sentence(src):
+    if 'bart' in globals():
+        return bart.decode(src)
+    return src
 def load_src_wmap(path):
     """Loads a source side word map from the file system.
     
@@ -400,6 +413,24 @@ def load_src_wmap(path):
                         [line.strip().split() for line in f]))
     return src_wmap
 
+def load_bart_decoder(path):
+    """Loads a source side word map from the file system.
+    
+    Args:
+        path (string): Path to the word map (Format: word id)
+    
+    Returns:
+        dict. Source word map (key: word, value: id)
+    """
+    
+    from fairseq import options
+    from fairseq.data import encoders
+    input_args = ['--path', path, os.path.dirname(path), '--bpe', 'gpt2']
+    parser = options.get_generation_parser()
+    args =options.parse_args_and_arch(parser, input_args)
+
+    global bart
+    bart = encoders.build_bpe(args)
 
 def load_trg_wmap(path):
     """Loads a target side word map from the file system.

@@ -24,7 +24,7 @@ To run dijkstra with PMI and a unigram model as the marginal LM, use the command
  python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra --subtract-marg --marg_path data/ckpts/lm.pt --lmbd 0.2
  ```
 
-You can run any of the decoders in the library and they should work with PMI (no promises that they'll finish running...). For example, you can run DFS by setting `--decoder dfs`.
+You can run any of the decoders in the library and they should work with PMI (no promises that they'll finish running...). For example, you can run DFS by setting `--decoder dfs` or use regular beam search with `--decoder beam --beam <k>`.
 
 ### Scoring
  For scoring, append the arguments `--outputs text --output_path <file_name>.txt` and then detokenize the text using the moses detokenizer script (copied to `scripts/detokenizer.perl` for ease)
@@ -36,7 +36,7 @@ You can run any of the decoders in the library and they should work with PMI (no
  The detokenized valid/test files for IWSLT14 de-en are located in the `data` folder already. You can run sacrebleu to score with:
 
  ```
- cat out | sacrebleu ref
+ cat out | sacrebleu data/valid.detok.en
  ```
 
  If you want to decode on different data sets, lmk and I can send the tokenization scripts and bpe codes I used for training the models.

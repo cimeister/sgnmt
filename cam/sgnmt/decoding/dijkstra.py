@@ -62,8 +62,10 @@ class DijkstraDecoder(Decoder):
         print("Bound:", best_score)
         heappush(open_set, (0.0,
                             PartialHypothesis(self.get_predictor_states())))
+        count = 0
         while open_set:
             c,hypo = heappop(open_set)
+            count += 1
             if self.early_stopping and hypo.score < best_score:
                 continue
             logging.debug("Expand (est=%f score=%f exp=%d best=%f): sentence: %s"
@@ -81,7 +83,7 @@ class DijkstraDecoder(Decoder):
                     best_score = hypo.score
                 self.add_full_hypo(hypo.generate_full_hypothesis())
                 if len(self.full_hypos) >= self.nbest: # if we have enough hypos
-                    return self.get_full_hypos_sorted()
+                    return self.get_full_hypos_sorted(), count
                 continue
             self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
             if not hypo.word_to_consume is None: # Consume if cheap expand
@@ -104,4 +106,4 @@ class DijkstraDecoder(Decoder):
                     heappush(new_open_set, heappop(open_set))
                 open_set = new_open_set
         
-        return self.get_full_hypos_sorted()
+        return self.get_full_hypos_sorted(), count

@@ -84,16 +84,25 @@ class BeamDecoder(Decoder):
         else:
             self.stop_criterion = self._all_eos
         self.pure_heuristic_scores = decoder_args.pure_heuristic_scores
+        self.reward = None #1.3
     
-    def _get_combined_score(self, hypo):
-        """Combines hypo score with future cost estimates."""
+    def _get_combined_score(self, hypo, stop_test=False):
+        """Combines hypo score with future cost estimates.""" 
         est_score = -self.estimate_future_cost(hypo)
         if not self.pure_heuristic_scores:
             return est_score + hypo.score
-        return est_score
+        if self.reward:
+            factor = min(self.l, len(hypo)) if not stop_test\
+                or hypo.get_last_word() == utils.EOS_ID else self.l
+            est_score += self.reward*factor
+        return est_score 
 
     def _best_eos(self, hypos):
         """Returns true if the best hypothesis ends with </S>"""
+        if self.reward:
+            ln_scores = [self._get_combined_score(hypo, stop_test=True) for hypo in hypos]
+            return hypos[np.argsort(ln_scores)[-1]].get_last_word() != utils.EOS_ID
+            
         return hypos[0].get_last_word() != utils.EOS_ID
 
     def _all_eos(self, hypos):
@@ -119,6 +128,7 @@ class BeamDecoder(Decoder):
             self.consume(hypo.word_to_consume)
             hypo.word_to_consume = None
         posterior, score_breakdown = self.apply_predictors(self.sub_beam_size)
+        self.count +=1
         hypo.predictor_states = self.get_predictor_states()
         return [hypo.cheap_expand(
                         trgt_word,
@@ -143,6 +153,7 @@ class BeamDecoder(Decoder):
             if not candidate.word_to_consume is None:
                 self.consume(candidate.word_to_consume)
                 candidate.word_to_consume = None
+                self.count += 1
                 candidate.predictor_states = self.get_predictor_states()
             valid = True
             for hypo in new_hypos:
@@ -183,9 +194,12 @@ class BeamDecoder(Decoder):
     
     def decode(self, src_sentence):
         """Decodes a single source sentence using beam search. """
+        self.count = 0
         self.initialize_predictors(src_sentence)
         hypos = self._get_initial_hypos()
         it = 0
+        if self.reward:
+            self.l = len(src_sentence)
         while self.stop_criterion(hypos):
             if it > self.max_len: # prevent infinite loops
                 break
@@ -216,4 +230,8 @@ class BeamDecoder(Decoder):
             logging.warn("No complete hypotheses found for %s" % src_sentence)
             for hypo in hypos:
                 self.add_full_hypo(hypo.generate_full_hypothesis())
-        return self.get_full_hypos_sorted()
+        if self.reward:
+            for h in self.full_hypos:
+                h.total_score += self.reward*min(self.l, len(h))
+        print("Count", self.count)
+        return self.get_full_hypos_sorted(), self.count

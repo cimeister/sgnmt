@@ -140,8 +140,9 @@ def argmax_n(arr, n):
         return sorted(arr, key=arr.get, reverse=True)[:n]
     elif len(arr) <= n:
         return range(n)
-    else:
-        return numpy.argpartition(arr, -n)[-n:]
+    elif hasattr(arr, 'is_cuda') and arr.is_cuda:
+        return numpy.argpartition(arr.cpu(), -n)[-n:]
+    return numpy.argpartition(arr, -n)[-n:]
 
 
 def argmax(arr):

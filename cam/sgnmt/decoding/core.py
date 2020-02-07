@@ -62,6 +62,12 @@ class Hypothesis:
         """Returns a string representation of this hypothesis."""
         return "%s (%f)" % (' '.join(str(w) for w in self.trgt_sentence),
                             self.total_score)
+    def __len__(self):
+        return len(self.trgt_sentence)
+
+    def __lt__(self, other):
+        return self.total_score < other.total_score
+    
 
 
 class PartialHypothesis(object):
@@ -80,13 +86,19 @@ class PartialHypothesis(object):
         self.score_breakdown = []
         self.word_to_consume = None
     def __lt__(self, other):
-        return id(self) < id(other)
+        return len(self.trgt_sentence) < len(other.trgt_sentence)
+
+    def __len__(self):
+        return len(self.trgt_sentence)
     
     def get_last_word(self):
         """Get the last word in the translation prefix. """
         if not self.trgt_sentence:
             return None
         return self.trgt_sentence[-1]
+        
+    def cur_length(self):
+        return len(self.trgt_sentence)
     
     def generate_full_hypothesis(self):
         """Create a ``Hypothesis`` instance from this hypothesis. """
@@ -145,8 +157,8 @@ class PartialHypothesis(object):
                                     the new word
         """
         hypo = self._new_partial_hypo(self.predictor_states,
-                                     word, score, score_breakdown)
-        hypo.word_to_consume = word
+                                     int(word), float(score), score_breakdown)
+        hypo.word_to_consume = int(word)
         return hypo
 
 
@@ -834,7 +846,7 @@ class Decoder(Observable):
             src_sentence (list): List of source word ids without <S> or
                                  </S> which make up the source sentence
         """
-        self.max_len = self.max_len_factor * len(src_sentence)
+        self.max_len = int(np.ceil(self.max_len_factor * len(src_sentence)))
         self.full_hypos = []
         self.current_sen_id += 1
         for idx, (p, _) in enumerate(self.predictors):

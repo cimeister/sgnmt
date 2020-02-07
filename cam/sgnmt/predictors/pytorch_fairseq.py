@@ -61,7 +61,8 @@ class FairseqPredictor(Predictor):
     """Predictor for using fairseq models."""
 
     def __init__(self, model_path, user_dir, lang_pair, n_cpu_threads=-1, 
-        subtract_uni=False, subtract_marg=False, marg_path=None, lmbda=0):
+        subtract_uni=False, subtract_marg=False, marg_path=None, lmbda=1.0, ppmi=False, epsilon=0
+        ):
         """Initializes a fairseq predictor.
 
         Args:
@@ -82,20 +83,21 @@ class FairseqPredictor(Predictor):
         task = tasks.setup_task(args)
         source_dict = task.source_dictionary
         target_dict = task.target_dictionary
-        self.src_vocab_size = len(source_dict)
-        self.trg_vocab_size = len(target_dict)
+        self.src_vocab_size = len(source_dict) + 1
+        self.trg_vocab_size = len(target_dict) + 1
         self.pad_id = target_dict.pad()
         self.eos_id = target_dict.eos()
-        self.unk_id = target_dict.unk()
+        self.bos_id = target_dict.bos()
          # Load ensemble
         self.models = self.load_models(model_path, task)
         self.model = EnsembleModel(self.models)
         self.model.eval()
 
-
         assert not subtract_marg & subtract_uni
         self.use_uni_dist = subtract_uni
         self.use_marg_dist = subtract_marg
+        assert not ppmi or subtract_marg or subtract_uni
+        
         self.lmbda = lmbda
         if self.use_uni_dist:
             unigram_dist = torch.Tensor(target_dict.count)
@@ -107,7 +109,8 @@ class FairseqPredictor(Predictor):
             if not marg_path:
                 raise AttributeError("No path (--marg_path) given for marginal model when --subtract_marg used")
             args = get_fairseq_args(marg_path, lang_pair)
-
+            self.ppmi = ppmi
+            self.eps = epsilon
             # Setup task, e.g., translation
             task = tasks.setup_task(args)
             assert source_dict == task.source_dictionary
@@ -154,6 +157,8 @@ class FairseqPredictor(Predictor):
             marg_lprobs, _ = self.marg_model.forward_decoder(
                 inputs, self.marg_encoder_outs
             )
+            if self.ppmi:
+                marg_lprobs[0] = torch.clamp(marg_lprobs[0], -self.eps)
             lprobs[0] = lprobs[0] - self.lmbda*marg_lprobs[0]
 
         return lprobs[0] if self.use_cuda else np.array(lprobs[0])
@@ -173,6 +178,7 @@ class FairseqPredictor(Predictor):
             'src_lengths': src_lengths})
         self.consumed = [utils.GO_ID or utils.EOS_ID]
         # Reset incremental states
+
         for model in self.models:
             self.model.incremental_states[model] = {}
         if self.use_marg_dist:
@@ -211,7 +217,10 @@ class FairseqPredictor(Predictor):
         if self.use_marg_dist:
             lprobs_marg, _ = self.marg_model.forward_decoder(
             inputs, self.marg_encoder_outs)
-            return (lprobs[0,self.eos_id] - self.lmbda*lprobs_marg[0,self.eos_id]).item()
+            eos_prob = (lprobs[0,self.eos_id] - self.lmbda*lprobs_marg[0,self.eos_id]).item()
+            if self.ppmi:
+                return min(eos_prob, 0)
+            return eos_prob
             
         return lprobs[0,self.eos_id].item()
 
