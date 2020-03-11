@@ -5,7 +5,7 @@
  To run Dijkstra's with a normal conditional LM, use the command:
 
  ```
- python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra 
+ python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra_ts 
  ```
  note that this probably won't finish since it takes up a huge amount of memory. To run beam search with k=5, use the command: 
  
@@ -13,15 +13,15 @@
  python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder beam --beam 5 
  ```
 
-To run dijkstra with PMI and a unigram model as the marginal LM, use the command:
+To run dijkstra_ts with PMI and a unigram model as the marginal LM, use the command:
  ```
- python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra --subtract-uni --lmbd 0.2
+ python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra_ts --subtract-uni --lmbd 0.2
  ```
 
- Note that lmbda is the interpolation parameter (i.e. lmbda 0.2 -> log P(y|x) - 0.2log P(y)). To run dijkstra with PMI and a NN as the marginal LM, use the command:
+ Note that lmbda is the interpolation parameter (i.e. lmbda 0.2 -> log P(y|x) - 0.2log P(y)). To run dijkstra_ts with PMI and a NN as the marginal LM, use the command:
 
  ```
- python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra --subtract-marg --marg_path data/ckpts/lm.pt --lmbd 0.2
+ python decode.py  --fairseq_path data/ckpts/cond_model.pt --fairseq_lang_pair de-en --src_wmap data/wmaps/wmap.bpe.de --trg_wmap data/wmaps/wmap.bpe.en --input_method file --src_test data/valid.de --preprocessing word --n_cpu_threads 30 --postprocessing bpe@@ --decoder dijkstra_ts --subtract-marg --marg_path data/ckpts/lm.pt --lmbd 0.2
  ```
 
 You can run any of the decoders in the library and they should work with PMI (no promises that they'll finish running...). For example, you can run DFS by setting `--decoder dfs` or use regular beam search with `--decoder beam --beam <k>`.

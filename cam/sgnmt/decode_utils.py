@@ -908,10 +908,6 @@ def do_decode(decoder,
     counts = []
     for sen_idx in get_sentence_indices(args.range, src_sentences):
         decoder.set_current_sen_id(sen_idx)
-        if sen_idx >= 1000:
-            print(counts)
-            print(sum(counts))
-            break
         try:
             src = "0" if src_sentences is False else src_sentences[sen_idx]
             if len(src.split()) > 1000:

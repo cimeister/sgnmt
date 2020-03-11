@@ -557,10 +557,10 @@ def get_parser():
                         "lower bounds for the simplelendfs decoder. Each line "
                         "must be in the format <len1>:<lower-bound1> ... "
                         "<lenN>:<lower-boundN>.")
-    group.add_argument("--subtract-marg", action='store_true',
+    group.add_argument("--subtract_marg", action='store_true',
                         help="If this is set to true, subtract the marginal"
                         " distribution at each time step during decoding")
-    group.add_argument("--subtract-uni", action='store_true',
+    group.add_argument("--subtract_uni", action='store_true',
                         help="If this is set to true, subtract the unigram"
                         " distribution at each time step during decoding")
     group.add_argument("--marg_path", default="",
@@ -575,6 +575,8 @@ def get_parser():
                         choices=['bounded','max', None],
                         help="")
     group.add_argument("--epsilon", default=20.0, type=float,
+                        help="give positive value")
+    group.add_argument("--memory_threshold_coef", default=0, type=int,
                         help="give positive value")
 
     ## Output options
@@ -640,7 +642,7 @@ def get_parser():
                         "with original default values (removing </w>, using @@"
                         " separator)\n")
     group.add_argument("--postprocessing", default="id",
-                        choices=['id','word', 'bpe@@','wmap', 'char', 'subword_nmt', 'bart'],
+                        choices=['id','word', 'bpe@@','wmap', 'char', 'subword_nmt', 'bart', 'bpe_'],
                         help="Postprocessing strategy for output sentences. "
                         "See --preprocessing for more.")
     group.add_argument("--bpe_codes", default="",

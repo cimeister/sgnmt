@@ -32,6 +32,7 @@ from fairseq import utils as fairseq_utils
 from fairseq.sequence_generator import EnsembleModel
 import torch
 import numpy as np
+import copy
 
 
 
@@ -147,7 +148,7 @@ class FairseqPredictor(Predictor):
         inputs = torch.LongTensor([self.consumed])
         if self.use_cuda:
             inputs = inputs.cuda()
-        lprobs, _ = self.model.forward_decoder(
+        lprobs, _  = self.model.forward_decoder(
             inputs, self.encoder_outs
         )
         lprobs[0, self.pad_id] = utils.NEG_INF
@@ -232,7 +233,8 @@ class FairseqPredictor(Predictor):
     
     def set_state(self, state):
         """The predictor state is the complete history."""
-        self.consumed, inc_states = state
+        consumed, inc_states = state
+        self.consumed = copy.copy(consumed)
         for model, inc_state in zip(self.models, inc_states):
             self.model.incremental_states[model] = inc_state
 

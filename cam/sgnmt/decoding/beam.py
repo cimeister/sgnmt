@@ -18,6 +18,7 @@
 
 import copy
 import logging
+import time
 
 from cam.sgnmt import utils
 from cam.sgnmt.decoding.core import Decoder, PartialHypothesis
@@ -121,19 +122,22 @@ class BeamDecoder(Decoder):
         Returns:
             list. List of child hypotheses
         """
+        t = time.time()
         if hypo.score <= self.min_score:
             return []
-        self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
+        self.set_predictor_states(copy.copy(hypo.predictor_states))
         if not hypo.word_to_consume is None: # Consume if cheap expand
             self.consume(hypo.word_to_consume)
             hypo.word_to_consume = None
         posterior, score_breakdown = self.apply_predictors(self.sub_beam_size)
         self.count +=1
         hypo.predictor_states = self.get_predictor_states()
-        return [hypo.cheap_expand(
+        hypos = [hypo.cheap_expand(
                         trgt_word,
                         posterior[trgt_word],
                         score_breakdown[trgt_word]) for trgt_word in posterior]
+        self.time += time.time() - t
+        return hypos
     
     def _filter_equal_hypos(self, hypos, scores):
         """Apply hypo recombination to the hypotheses in ``hypos``.
@@ -195,6 +199,7 @@ class BeamDecoder(Decoder):
     def decode(self, src_sentence):
         """Decodes a single source sentence using beam search. """
         self.count = 0
+        self.time = 0
         self.initialize_predictors(src_sentence)
         hypos = self._get_initial_hypos()
         it = 0

@@ -18,8 +18,6 @@
 
 
 import copy
-from heapq import heappush, heappop
-import heapq
 import logging
 import numpy as np
 from sortedcontainers import SortedDict
@@ -30,12 +28,6 @@ from cam.sgnmt.decoding.MinMaxHeap import MinMaxHeap
 
 from cam.sgnmt import utils
 from cam.sgnmt.decoding.core import Decoder, PartialHypothesis
-import os
-import gc
-import ctypes
-
-class PyObject(ctypes.Structure):
-    _fields_ = [("refcnt", ctypes.c_long)]
 
 
 class DijkstraTSDecoder(Decoder):
@@ -72,8 +64,11 @@ class DijkstraTSDecoder(Decoder):
 
         self.epsilon = decoder_args.epsilon
         self.lmbda = decoder_args.lmbda
-        self.not_monotonic = self.reward_type or decoder_args.ppmi
-
+        self.not_monotonic = (self.reward_type or decoder_args.ppmi) and not decoder_args.heuristics
+        self.use_heuristics = decoder_args.heuristics
+        self.size_threshold = self.beam*decoder_args.memory_threshold_coef\
+            if decoder_args.memory_threshold_coef > 0 else utils.INF
+        
     def decode(self, src_sentence):
         self.initialize_predictors(src_sentence)
         self.initialize_order_ds() 
@@ -83,13 +78,15 @@ class DijkstraTSDecoder(Decoder):
         self.time1 = 0
         self.time2 = 0
         self.time3 = 0
+
+        self.size = 0
         
         self.reward_bound(src_sentence)
         while self.queue_order:
             c,t = self.get_next()
             cur_queue = self.queues[t]
             score, hypo = cur_queue.popmin() 
-            assert -c == score
+            self.size -= 1
             self.time_sync[t] -= 1
 
             if hypo.get_last_word() == utils.EOS_ID:
@@ -110,13 +107,6 @@ class DijkstraTSDecoder(Decoder):
                     
             self.update(cur_queue, t)
             self.update(next_queue, t+1)
-
-            for x,i in enumerate(self.score_by_t):
-                if self.queues[x]:
-                    assert i == -self.queues[x].peekmin()[0]
-                else:
-                    assert all([j[1] != x for j in self.queue_order.items()])
-
         
         print(self.time1, self.time2, self.time3)
         print("Count", self.count)
@@ -132,7 +122,7 @@ class DijkstraTSDecoder(Decoder):
             list. List of child hypotheses
         """
         t = time.time()
-        self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
+        self.set_predictor_states(copy.copy(hypo.predictor_states))
         if not hypo.word_to_consume is None: # Consume if cheap expand
             self.consume(hypo.word_to_consume)
             hypo.word_to_consume = None
@@ -162,11 +152,20 @@ class DijkstraTSDecoder(Decoder):
         
     def update(self, queue, t, forward_prune=False):
         ti = time.time()
+        # remove current best value associated with queue
         self.queue_order.pop(self.score_by_t[t], default=None)
-        if len(queue) > 0:
+
+        # if beam used up at current time step, can prunehypotheses from older time steps
+        if self.time_sync[t] <= 0:
+            self.prune(t)
+
+        #replace with next best value if anything left in queue
+        elif len(queue) > 0:
             self.queue_order[-queue.peekmin()[0]] = t
             self.score_by_t[t] = -queue.peekmin()[0]
-        elif forward_prune:
+
+        # if previous hypothesis was complete, reduce beam in next time steps
+        if forward_prune:
             i = self.max_len
             while i > t:
                 self.time_sync[i] -= 1
@@ -177,17 +176,12 @@ class DijkstraTSDecoder(Decoder):
                     # remove largest element since beam is getting "smaller"
                     self.queues[i].popmax()
                 i-=1
-        if self.time_sync[t] <= 0:
-            self.prune(t)
     
         self.time2 += time.time() - ti
 
     def prune(self, t):
         for i in range(t+1):
-            if not self.queue_order.pop(self.score_by_t[i], default=None):
-                #assert len(self.queues[i]) == 0
-                #continue
-                pass
+            self.queue_order.pop(self.score_by_t[i], default=None)
             self.queues[i] = []
 
     
@@ -196,6 +190,10 @@ class DijkstraTSDecoder(Decoder):
         ti = time.time()
         if len(queue) < self.time_sync[t]:
             queue.insert((-score, hypo))
+            if self.size >= self.size_threshold:
+                self.remove_one()
+            else:
+                self.size += 1
         else:
             max_val = queue.peekmax()[0]
             if score > -max_val:
@@ -204,12 +202,20 @@ class DijkstraTSDecoder(Decoder):
 
         self.time1 += time.time() - ti
         
+    def remove_one(self):
+        """ helper function for memory threshold"""
+        for t, q in enumerate(self.queues):
+            if len(q) > 0:
+                q.popmax()
+                if len(q) == 0:
+                    self.queue_order.pop(self.score_by_t[t], default=None)
+                return
 
     def stop(self):
         if self.not_monotonic:
             if not self.early_stopping and len(self.full_hypos) < self.beam:
                 return False
-            threshold = min(self.full_hypos) if self.early_stopping else max(self.full_hypos)
+            threshold = max(self.full_hypos) if self.early_stopping else min(self.full_hypos)
             if all([threshold.total_score > self.max_pos_score(q.peekmin()[1]) for q in self.queues if q]):
                 return True
         elif self.early_stopping:
@@ -220,6 +226,7 @@ class DijkstraTSDecoder(Decoder):
 
     def reward_bound(self, src_sentence):
         if self.reward_type == "bounded":
+            # french is 0.72
             self.l = len(src_sentence)
         elif self.reward_type == "max":
             self.l = self.max_len
@@ -227,9 +234,19 @@ class DijkstraTSDecoder(Decoder):
     def get_adjusted_score(self, hypo):
         """Combines hypo score with future cost estimates.""" 
         current_score =  hypo.score
-        if self.reward_type:
+        if self.reward_type: 
             factor =  min(self.l, len(hypo))
             current_score += self.reward_coef*factor
+            print(self.heuristics)
+            if self.heuristics:
+                if hypo.get_last_word() != utils.EOS_ID:
+                        potential = max(self.l - len(hypo.trgt_sentence),0) 
+                        current_score += self.reward_coef*potential
+        elif self.heuristics:
+            if hypo.get_last_word() != utils.EOS_ID:
+                remaining = self.max_len - len(hypo.trgt_sentence) 
+                current_score += self.lmbda*self.epsilon*remaining
+
         return current_score 
 
     def max_pos_score(self, hypo):
@@ -239,7 +256,7 @@ class DijkstraTSDecoder(Decoder):
                 if hypo.get_last_word() != utils.EOS_ID else 0
             current_score += max_increase
         elif self.reward_type:
-            factor =  min(0,self.l - len(hypo)) #if hypo.get_last_word() == utils.EOS_ID else self.l
+            factor =  self.l if hypo.get_last_word() != utils.EOS_ID else 0
             current_score += self.reward_coef*factor
         return current_score
         

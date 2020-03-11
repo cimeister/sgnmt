@@ -84,6 +84,8 @@ def initialize(args):
         encoder = BPEEncoder(args.bpe_codes)
     elif args.preprocessing == "bpe@@":
         encoder = BPEEncoder(args.bpe_codes, "@@", True)
+    elif args.preprocessing == "bpe_":
+        encoder = BPEEncoder(args.bpe_codes, "▁", True)
     else:
         raise NotImplementedError("Unknown preprocessing")
     if args.postprocessing == "id":
@@ -99,6 +101,8 @@ def initialize(args):
         decoder = BPEDecoder()
     elif args.postprocessing == "bpe@@":
         decoder = BPEAtAtDecoder()
+    elif args.postprocessing == "bpe_":
+        decoder = BPEUndDecoder()
     else:
         raise NotImplementedError("Unknown postprocessing")
 
@@ -379,6 +383,13 @@ class BPEAtAtDecoder(Decoder):
     def decode(self, trg_sentence):
         return " ".join(
            trg_wmap.get(w, "<UNK>") for w in trg_sentence).replace("@@ ", "")
+
+class BPEUndDecoder(Decoder):
+    """"Decoder for BPE mapping with @@ separator."""
+
+    def decode(self, trg_sentence):
+        return " ".join(
+           trg_wmap.get(w, "<UNK>") for w in trg_sentence).replace(" ", "").replace("▁", " ")
 
 
 # Word maps
