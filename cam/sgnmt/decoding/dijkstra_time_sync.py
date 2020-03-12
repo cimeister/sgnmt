@@ -71,7 +71,7 @@ class DijkstraTSDecoder(Decoder):
         
     def decode(self, src_sentence):
         self.initialize_predictors(src_sentence)
-        self.initialize_order_ds() 
+        self._initialize_order_ds() 
         self.active = self.beam
         self.count = 0
         
@@ -81,32 +81,32 @@ class DijkstraTSDecoder(Decoder):
 
         self.size = 0
         
-        self.reward_bound(src_sentence)
+        self._reward_bound(src_sentence)
         while self.queue_order:
-            c,t = self.get_next()
+            c,t = self._get_next()
             cur_queue = self.queues[t]
             score, hypo = cur_queue.popmin() 
             self.size -= 1
             self.time_sync[t] -= 1
 
             if hypo.get_last_word() == utils.EOS_ID:
-                hypo.score = self.get_adjusted_score(hypo)
+                hypo.score = self._get_adjusted_score(hypo)
                 self.add_full_hypo(hypo.generate_full_hypothesis())
-                if self.stop(): # if stopping criterion are met
+                if self._stop(): # if stopping criterion are met
                     break
-                self.update(cur_queue, t, forward_prune=True)
+                self._update(cur_queue, t, forward_prune=True)
                 continue
 
             if t == self.max_len:
-                self.update(cur_queue, t)
+                self._update(cur_queue, t)
                 continue
 
             next_queue = self.queues[t+1]
             for next_hypo in self._expand_hypo(hypo):
-                self.add_hypo(next_hypo, next_queue, t+1)
+                self._add_hypo(next_hypo, next_queue, t+1)
                     
-            self.update(cur_queue, t)
-            self.update(next_queue, t+1)
+            self._update(cur_queue, t)
+            self._update(next_queue, t+1)
         
         print(self.time1, self.time2, self.time3)
         print("Count", self.count)
@@ -138,7 +138,7 @@ class DijkstraTSDecoder(Decoder):
         self.time3 += time.time() - t
         return new_hypos
 
-    def initialize_order_ds(self):
+    def _initialize_order_ds(self):
         self.queues = [MinMaxHeap() for k in range(self.max_len+1)]
         self.queues[0].insert((0.0, PartialHypothesis(self.get_predictor_states())))
         self.queue_order = SortedDict({0.0: 0})
@@ -147,17 +147,17 @@ class DijkstraTSDecoder(Decoder):
         self.time_sync = defaultdict(lambda: self.beam)
         self.time_sync[0] = 1
 
-    def get_next(self):
+    def _get_next(self):
         return self.queue_order.popitem()
         
-    def update(self, queue, t, forward_prune=False):
+    def _update(self, queue, t, forward_prune=False):
         ti = time.time()
         # remove current best value associated with queue
         self.queue_order.pop(self.score_by_t[t], default=None)
 
         # if beam used up at current time step, can prunehypotheses from older time steps
         if self.time_sync[t] <= 0:
-            self.prune(t)
+            self._prune(t)
 
         #replace with next best value if anything left in queue
         elif len(queue) > 0:
@@ -170,7 +170,7 @@ class DijkstraTSDecoder(Decoder):
             while i > t:
                 self.time_sync[i] -= 1
                 if self.time_sync[i] <= 0:
-                    self.prune(i)
+                    self._prune(i)
                     return
                 while len(self.queues[i]) > self.time_sync[i]:
                     # remove largest element since beam is getting "smaller"
@@ -179,19 +179,19 @@ class DijkstraTSDecoder(Decoder):
     
         self.time2 += time.time() - ti
 
-    def prune(self, t):
+    def _prune(self, t):
         for i in range(t+1):
             self.queue_order.pop(self.score_by_t[i], default=None)
             self.queues[i] = []
 
     
-    def add_hypo(self, hypo, queue, t):
-        score = self.get_adjusted_score(hypo)
+    def _add_hypo(self, hypo, queue, t):
+        score = self._get_adjusted_score(hypo)
         ti = time.time()
         if len(queue) < self.time_sync[t]:
             queue.insert((-score, hypo))
             if self.size >= self.size_threshold:
-                self.remove_one()
+                self._remove_one()
             else:
                 self.size += 1
         else:
@@ -202,7 +202,7 @@ class DijkstraTSDecoder(Decoder):
 
         self.time1 += time.time() - ti
         
-    def remove_one(self):
+    def _remove_one(self):
         """ helper function for memory threshold"""
         for t, q in enumerate(self.queues):
             if len(q) > 0:
@@ -211,12 +211,13 @@ class DijkstraTSDecoder(Decoder):
                     self.queue_order.pop(self.score_by_t[t], default=None)
                 return
 
-    def stop(self):
+    def _stop(self):
+        """ check if stopping criterion are met """
         if self.not_monotonic:
             if not self.early_stopping and len(self.full_hypos) < self.beam:
                 return False
             threshold = max(self.full_hypos) if self.early_stopping else min(self.full_hypos)
-            if all([threshold.total_score > self.max_pos_score(q.peekmin()[1]) for q in self.queues if q]):
+            if all([threshold.total_score > self._max_pos_score(q.peekmin()[1]) for q in self.queues if q]):
                 return True
         elif self.early_stopping:
             return True 
@@ -224,14 +225,15 @@ class DijkstraTSDecoder(Decoder):
             return True
         return False
 
-    def reward_bound(self, src_sentence):
+    def _reward_bound(self, src_sentence):
+        """ initialize reward bound """
         if self.reward_type == "bounded":
             # french is 0.72
             self.l = len(src_sentence)
         elif self.reward_type == "max":
             self.l = self.max_len
 
-    def get_adjusted_score(self, hypo):
+    def _get_adjusted_score(self, hypo):
         """Combines hypo score with future cost estimates.""" 
         current_score =  hypo.score
         if self.reward_type: 
@@ -249,7 +251,8 @@ class DijkstraTSDecoder(Decoder):
 
         return current_score 
 
-    def max_pos_score(self, hypo):
+    def _max_pos_score(self, hypo):
+        """ maximum possible score a hypothesis can achieve given current attributes"""
         current_score = hypo.score
         if self.lmbda:
             max_increase = self.lmbda*self.epsilon*(self.max_len - len(hypo))\

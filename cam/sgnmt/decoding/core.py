@@ -85,7 +85,6 @@ class PartialHypothesis(object):
         self.score = 0.0
         self.score_breakdown = []
         self.word_to_consume = None
-        self.past = []
 
     def __lt__(self, other):
         return len(self.trgt_sentence) < len(other.trgt_sentence)
@@ -123,7 +122,6 @@ class PartialHypothesis(object):
         new_hypo.score_breakdown = copy.copy(self.score_breakdown)
         new_hypo.trgt_sentence = self.trgt_sentence + [word]
         new_hypo.score_breakdown.append(score_breakdown)
-        new_hypo.past = copy.copy(self.past)
         return new_hypo
 
     def expand(self, word, new_states, score, score_breakdown):
