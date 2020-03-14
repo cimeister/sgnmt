@@ -72,21 +72,20 @@ class DijkstraTSDecoder(Decoder):
     def decode(self, src_sentence):
         self.initialize_predictors(src_sentence)
         self._initialize_order_ds() 
-        self.active = self.beam
         self.count = 0
         
         self.time1 = 0
         self.time2 = 0
         self.time3 = 0
 
-        self.size = 0
+        self.total_queue_size = 0
         
         self._reward_bound(src_sentence)
         while self.queue_order:
             c,t = self._get_next()
             cur_queue = self.queues[t]
             score, hypo = cur_queue.popmin() 
-            self.size -= 1
+            self.total_queue_size -= 1
             self.time_sync[t] -= 1
 
             if hypo.get_last_word() == utils.EOS_ID:
@@ -129,13 +128,14 @@ class DijkstraTSDecoder(Decoder):
 
         posterior, score_breakdown = self.apply_predictors(self.beam)
         self.count += 1
+        self.time3 += time.time() - t
         hypo.predictor_states = self.get_predictor_states()
         new_hypos = [hypo.cheap_expand(
                         trgt_word,
                         posterior[trgt_word],
                         score_breakdown[trgt_word]) for trgt_word in posterior]
     
-        self.time3 += time.time() - t
+        
         return new_hypos
 
     def _initialize_order_ds(self):
@@ -144,7 +144,7 @@ class DijkstraTSDecoder(Decoder):
         self.queue_order = SortedDict({0.0: 0})
         self.score_by_t = [0.0]
         self.score_by_t.extend([None]*self.max_len)
-        self.time_sync = defaultdict(lambda: self.beam)
+        self.time_sync = defaultdict(lambda: self.beam if self.beam > 0 else utils.INF)
         self.time_sync[0] = 1
 
     def _get_next(self):
@@ -190,10 +190,10 @@ class DijkstraTSDecoder(Decoder):
         ti = time.time()
         if len(queue) < self.time_sync[t]:
             queue.insert((-score, hypo))
-            if self.size >= self.size_threshold:
+            if self.total_queue_size >= self.size_threshold:
                 self._remove_one()
             else:
-                self.size += 1
+                self.total_queue_size += 1
         else:
             max_val = queue.peekmax()[0]
             if score > -max_val:
