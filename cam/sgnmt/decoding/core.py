@@ -85,7 +85,6 @@ class PartialHypothesis(object):
         self.score = 0.0
         self.score_breakdown = []
         self.word_to_consume = None
-        self.past = []
 
     def __lt__(self, other):
         return len(self.trgt_sentence) < len(other.trgt_sentence)
@@ -123,7 +122,6 @@ class PartialHypothesis(object):
         new_hypo.score_breakdown = copy.copy(self.score_breakdown)
         new_hypo.trgt_sentence = self.trgt_sentence + [word]
         new_hypo.score_breakdown.append(score_breakdown)
-        new_hypo.past = copy.copy(self.past)
         return new_hypo
 
     def expand(self, word, new_states, score, score_breakdown):
@@ -164,6 +162,30 @@ class PartialHypothesis(object):
         hypo.word_to_consume = int(word)
         return hypo
 
+    # GUIDOs
+    def get_score_variance(self):
+        score_breakdown = [x[0][0] for x in self.score_breakdown]
+        u = sum(score_breakdown)/len(score_breakdown)
+
+        return 1./len(score_breakdown)*sum([(s - u)**2 for s in score_breakdown])
+
+    def get_score_max(self):
+        score_breakdown = [-x[0][0] for x in self.score_breakdown]
+        return max(score_breakdown)
+
+    def get_score_max2(self, tau):
+        if self.get_score_max() <= tau:
+            return 0
+        return utils.INF
+
+    def get_local_variance(self):
+        score_breakdown = [x[0][0] for x in self.score_breakdown]
+        if len(score_breakdown) < 2:
+            return 0
+        local_var = 0
+        for i in range(len(score_breakdown) - 1):
+            local_var += (score_breakdown[i+1] - score_breakdown[i])**2
+        return local_var/(len(score_breakdown)- 1)
 
 """The ``CLOSED_VOCAB_SCORE_NORM_*`` constants define the normalization
 behavior for closed vocabulary predictor scores. Closed vocabulary 

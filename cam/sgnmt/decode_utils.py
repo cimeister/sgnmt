@@ -905,7 +905,7 @@ def do_decode(decoder,
     start_time = time.time()
     logging.info("Start time: %s" % start_time)
     sen_indices = []
-    counts = []
+    #counts = []
     for sen_idx in get_sentence_indices(args.range, src_sentences):
         decoder.set_current_sen_id(sen_idx)
         try:
@@ -920,10 +920,8 @@ def do_decode(decoder,
             start_hypo_time = time.time()
             decoder.apply_predictors_count = 0
             hypos, count = decoder.decode(src)
-            counts.append(count)
-            #hypos = [hypo for hypo in decoder.decode(src)
-                        #if hypo.total_score > args.min_score]
-            
+            #counts.append(count)
+
             if not hypos:
                 logging.error("No translation found for ID %d!" % (sen_idx+1))
                 logging.info("Stats (ID: %d): score=<not-found> "
@@ -943,6 +941,7 @@ def do_decode(decoder,
                                         hypos[0].total_score,
                                         decoder.apply_predictors_count,
                                         time.time() - start_hypo_time))
+            print('')
             all_hypos.append(hypos)
             sen_indices.append(sen_idx)
             try:
@@ -969,7 +968,7 @@ def do_decode(decoder,
                                                        sen_idx+1,
                                                        e,
                                                        traceback.format_exc()))
-    print(sum(counts))
+
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
     try:
         for output_handler in output_handlers:

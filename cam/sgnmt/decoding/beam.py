@@ -86,17 +86,25 @@ class BeamDecoder(Decoder):
             self.stop_criterion = self._all_eos
         self.pure_heuristic_scores = decoder_args.pure_heuristic_scores
         self.reward = None #1.3
+        self.lmbda = decoder_args.lmbda
     
     def _get_combined_score(self, hypo, stop_test=False):
         """Combines hypo score with future cost estimates.""" 
-        est_score = -self.estimate_future_cost(hypo)
-        if not self.pure_heuristic_scores:
-            return est_score + hypo.score
-        if self.reward:
-            factor = min(self.l, len(hypo)) if not stop_test\
-                or hypo.get_last_word() == utils.EOS_ID else self.l
-            est_score += self.reward*factor
-        return est_score 
+        score = hypo.score
+        score -= self.lmbda*hypo.get_score_variance()
+        # score -= self.lmbda*hypo.get_score_max()
+        # score -= self.lmbda*hypo.get_local_variance()
+        return score 
+    # def _get_combined_score(self, hypo, stop_test=False):
+    #     """Combines hypo score with future cost estimates.""" 
+    #     est_score = -self.estimate_future_cost(hypo)
+    #     if not self.pure_heuristic_scores:
+    #         return est_score + hypo.score
+    #     if self.reward:
+    #         factor = min(self.l, len(hypo)) if not stop_test\
+    #             or hypo.get_last_word() == utils.EOS_ID else self.l
+    #         est_score += self.reward*factor
+    #     return est_score 
 
     def _best_eos(self, hypos):
         """Returns true if the best hypothesis ends with </S>"""
@@ -230,6 +238,7 @@ class BeamDecoder(Decoder):
                 hypos = self._get_next_hypos(next_hypos, next_scores)
         for hypo in hypos:
             if hypo.get_last_word() == utils.EOS_ID:
+                hypo.score = self._get_combined_score(hypo)
                 self.add_full_hypo(hypo.generate_full_hypothesis()) 
         if not self.full_hypos:
             logging.warn("No complete hypotheses found for %s" % src_sentence)

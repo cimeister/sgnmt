@@ -578,6 +578,9 @@ def get_parser():
                         help="give positive value")
     group.add_argument("--memory_threshold_coef", default=0, type=int,
                         help="give positive value")
+    group.add_argument("--guido", default=None, choices=['variance', 'max',
+                        'max2', 'local_variance'],
+                        help="give positive value")
 
     ## Output options
     group = parser.add_argument_group('Output options')
