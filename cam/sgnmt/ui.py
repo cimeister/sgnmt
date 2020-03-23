@@ -577,10 +577,20 @@ def get_parser():
     group.add_argument("--epsilon", default=20.0, type=float,
                         help="give positive value")
     group.add_argument("--memory_threshold_coef", default=0, type=int,
-                        help="give positive value")
+                        help="total queue size will be set to `memory_threshold_coef`"
+                         "* beam size. When capacity is exceeded, the worst scoring "
+                         "hypothesis from the earliest time step will be discarded")
     group.add_argument("--guido", default=None, choices=['variance', 'max',
                         'max2', 'local_variance'],
-                        help="give positive value")
+                        help="for guido decoding")
+    group.add_argument("--store_by_pos", action='store_true',
+                        help="Stores all hypotheses by their ranking; outputs"
+                        "different stream for each ranking")
+    group.add_argument("--gumbel", action='store_true',
+                        help="Add gumbel RV to make beam search effectively"
+                        "random sampling")
+    group.add_argument('--fairseq_temperature', default=1., type=float, metavar='N',
+                       help='temperature for generation')
 
     ## Output options
     group = parser.add_argument_group('Output options')
@@ -606,6 +616,8 @@ def get_parser():
                         "format\n"
                         "* 'nbest': Moses' n-best format with separate "
                         "scores for each predictor.\n"
+                        "* 'nbest_sep': nbest translations in plain text "
+                        "output to individual files based off of 'output_path'\n"
                         "* 'fst': Translation lattices in OpenFST "
                         "format with sparse tuple arcs.\n"
                         "* 'sfst': Translation lattices in OpenFST "

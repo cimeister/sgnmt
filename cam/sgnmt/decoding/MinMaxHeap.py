@@ -211,9 +211,6 @@ def replacemax(array, size, val):
 		array[size-1] = val
 		bubbleup(array, size-1)
 
-	if not minmaxheapproperty(array, size):
-		print(array)
-		exit(0)
 
 def insert(array, k, size):
 	array[size] = k

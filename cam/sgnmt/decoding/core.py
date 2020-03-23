@@ -23,6 +23,8 @@ be used by predictors to represent translation prefixes.
 
 from abc import abstractmethod
 import copy
+import math
+from runstats import Statistics
 
 from cam.sgnmt import utils
 from cam.sgnmt.predictors.core import UnboundedVocabularyPredictor
@@ -84,7 +86,11 @@ class PartialHypothesis(object):
         self.trgt_sentence = []
         self.score = 0.0
         self.score_breakdown = []
+        self.statistics = Statistics()
         self.word_to_consume = None
+        self.local = 0
+
+        self.base_score = 0.0
 
     def __lt__(self, other):
         return len(self.trgt_sentence) < len(other.trgt_sentence)
@@ -105,7 +111,7 @@ class PartialHypothesis(object):
         """Create a ``Hypothesis`` instance from this hypothesis. """
         return Hypothesis(self.trgt_sentence, self.score, self.score_breakdown)
     
-    def _new_partial_hypo(self, states, word, score, score_breakdown):
+    def _new_partial_hypo(self, states, word, score, score_breakdown, additive=True):
         """Create a new partial hypothesis, setting its state, score
         translation prefix and score breakdown.
         Args:
@@ -118,10 +124,13 @@ class PartialHypothesis(object):
                                     the new word
         """
         new_hypo = PartialHypothesis(states)
-        new_hypo.score = self.score + score
+        new_hypo.score = self.score + score if additive else score
         new_hypo.score_breakdown = copy.copy(self.score_breakdown)
+        new_hypo.statistics = self.statistics.copy()
+        new_hypo.statistics.push(score_breakdown[0][0])
         new_hypo.trgt_sentence = self.trgt_sentence + [word]
         new_hypo.score_breakdown.append(score_breakdown)
+        new_hypo.local = self.local
         return new_hypo
 
     def expand(self, word, new_states, score, score_breakdown):
@@ -140,7 +149,7 @@ class PartialHypothesis(object):
         """
         return self._new_partial_hypo(new_states, word, score, score_breakdown)
     
-    def cheap_expand(self, word, score, score_breakdown):
+    def cheap_expand(self, word, score, score_breakdown, base_score=None):
         """Creates a new partial hypothesis adding a new word to the
         translation prefix with given probability. Does NOT update the
         predictor states but adds a flag which signals that the last 
@@ -158,20 +167,20 @@ class PartialHypothesis(object):
                                     the new word
         """
         hypo = self._new_partial_hypo(self.predictor_states,
-                                     int(word), float(score), score_breakdown)
+                                     int(word), float(score), score_breakdown,
+                                     additive=False if base_score else True)
         hypo.word_to_consume = int(word)
+        hypo.base_score = self.base_score + base_score
         return hypo
 
     # GUIDOs
     def get_score_variance(self):
-        score_breakdown = [x[0][0] for x in self.score_breakdown]
-        u = sum(score_breakdown)/len(score_breakdown)
-
-        return 1./len(score_breakdown)*sum([(s - u)**2 for s in score_breakdown])
+        if len(self.score_breakdown) < 2:
+            return 1
+        return self.statistics.variance(ddof=0)
 
     def get_score_max(self):
-        score_breakdown = [-x[0][0] for x in self.score_breakdown]
-        return max(score_breakdown)
+        return -self.statistics.minimum()
 
     def get_score_max2(self, tau):
         if self.get_score_max() <= tau:
@@ -179,13 +188,12 @@ class PartialHypothesis(object):
         return utils.INF
 
     def get_local_variance(self):
-        score_breakdown = [x[0][0] for x in self.score_breakdown]
-        if len(score_breakdown) < 2:
-            return 0
-        local_var = 0
-        for i in range(len(score_breakdown) - 1):
-            local_var += (score_breakdown[i+1] - score_breakdown[i])**2
-        return local_var/(len(score_breakdown)- 1)
+        if len(self.score_breakdown) < 2:
+            return 1
+        self.local += (self.score_breakdown[-1][0][0] - self.score_breakdown[-2][0][0])**2
+        return self.local/(len(self.score_breakdown)- 1)
+
+
 
 """The ``CLOSED_VOCAB_SCORE_NORM_*`` constants define the normalization
 behavior for closed vocabulary predictor scores. Closed vocabulary 
@@ -310,6 +318,7 @@ class Decoder(Observable):
         self.heuristics = []
         self.heuristic_predictors = []
         self.predictor_names = []
+        self.gumbel = decoder_args.gumbel
         self.allow_unk_in_output = decoder_args.allow_unk_in_output
         self.nbest = 1 # length of n-best list
         self.combi_predictor_method = Decoder.combi_arithmetic_unnormalized
@@ -328,7 +337,6 @@ class Decoder(Observable):
         elif decoder_args.closed_vocabulary_normalization == 'non_zero':
             self.closed_vocab_norm = CLOSED_VOCAB_SCORE_NORM_NON_ZERO
             self.combine_posteriors = self._combine_posteriors_norm_non_zero
-
         self.current_sen_id = -1
         self.apply_predictors_count = 0
         self.lower_bounds = []
@@ -563,6 +571,7 @@ class Decoder(Observable):
                     pred_weights[idx] = (1.0 - s) * pred_weights[idx] + s * uni
         return pred_weights
     
+    
     def apply_predictors(self, top_n=0):
         """Get the distribution over the next word by combining the
         predictor scores.
@@ -583,6 +592,7 @@ class Decoder(Observable):
         bounded_posteriors = [p.predict_next() for (p, _) in bounded_predictors]
         non_zero_words = self._get_non_zero_words(bounded_predictors,
                                                   bounded_posteriors)
+        
         if not non_zero_words: # Special case: no word is possible
             non_zero_words = set([utils.EOS_ID])
         # Add unbounded predictors and unk probabilities
@@ -590,6 +600,7 @@ class Decoder(Observable):
         unk_probs = []
         pred_weights = []
         bounded_idx = 0
+        
         for (p, w) in self.predictors:
             if isinstance(p, UnboundedVocabularyPredictor):
                 posterior = p.predict_next(non_zero_words)
@@ -602,7 +613,8 @@ class Decoder(Observable):
         pred_weights = self.apply_interpolation_strategy(
                 pred_weights, non_zero_words, posteriors, unk_probs)
         ret = self.combine_posteriors(
-            non_zero_words, posteriors, unk_probs, pred_weights, top_n)
+            non_zero_words, posteriors, unk_probs, pred_weights, top_n) 
+                
         if not self.allow_unk_in_output and utils.UNK_ID in ret[0]:
             del ret[0][utils.UNK_ID]
             del ret[1][utils.UNK_ID]
@@ -610,8 +622,105 @@ class Decoder(Observable):
             top = utils.argmax_n(ret[0], top_n)
             ret = ({w: ret[0][w] for w in top},
                    {w: ret[1][w] for w in top})
+        
         self.notify_observers(ret, message_type = MESSAGE_TYPE_POSTERIOR)
         return ret
+
+
+    def apply_predictors_with_gumbel(self, gumbel_S, base_score, top_n=0):
+        """Get the distribution over the next word by combining the
+        predictor scores.
+
+        Args:
+            top_n (int): If positive, return only the best n words.
+        
+        Returns:
+            combined,score_breakdown: Two dicts. ``combined`` maps 
+            target word ids to the combined score, ``score_breakdown``
+            contains the scores for each predictor separately 
+            represented as tuples (unweighted_score, predictor_weight)
+        """
+        assert len(self.predictors) == 1
+        self.apply_predictors_count += 1
+        # Get bounded posteriors
+        bounded_posterior = self.predictors[0][0].predict_next() 
+        non_zero_words = self._get_non_zero_words(self.predictors,
+                                                  [bounded_posterior])
+
+        np.random.seed(seed=0)
+        gumbels = np.random.gumbel(loc=0, scale=1, size=bounded_posterior.shape)
+        gumbel_posterior = bounded_posterior + gumbels + base_score
+        Z = np.max(gumbel_posterior)
+        gumbel_full_posterior = np.nan_to_num(-np.log(np.exp(-gumbel_S) - np.exp(Z) + np.exp(-gumbel_posterior)))
+
+        # v = gumbel_S - gumbel_posterior + utils.logmexp(gumbel_posterior - Z)
+        # gumbel_full_posterior = gumbel_S - np.maximum(0, v) - utils.logpexp(-np.abs(v))
+        if hasattr(self.predictors[0][0], "pad_id"):
+            gumbel_full_posterior[self.predictors[0][0].pad_id] = utils.NEG_INF
+        
+        if not non_zero_words: # Special case: no word is possible
+            non_zero_words = set([utils.EOS_ID])
+        # Add unbounded predictors and unk probabilities
+        posteriors = []
+        unk_probs = []
+        pred_weights = []
+        bounded_idx = 0
+        
+        for (p, w) in self.predictors:
+            if isinstance(p, UnboundedVocabularyPredictor):
+                posterior = p.predict_next(non_zero_words)
+            else: # Take it from the bounded_* variables
+                posterior = gumbel_full_posterior
+                bounded_idx += 1
+            posteriors.append(posterior)
+            unk_probs.append(p.get_unk_probability(posterior))
+            pred_weights.append(w)
+        pred_weights = self.apply_interpolation_strategy(
+                pred_weights, non_zero_words, posteriors, unk_probs)
+        posteriors, breakdown = self.combine_posteriors(
+            non_zero_words, posteriors, unk_probs, pred_weights, top_n) 
+
+        og_posterior = {target_word: utils.common_get(bounded_posterior,
+                                       target_word, unk_probs[0]) for target_word in posteriors}
+        if not self.allow_unk_in_output and utils.UNK_ID in posteriors:
+            del posteriors[utils.UNK_ID]
+            del breakdown[utils.UNK_ID]
+
+        self.notify_observers((gumbel_full_posterior, breakdown), message_type = MESSAGE_TYPE_POSTERIOR)
+        return posteriors, breakdown, og_posterior
+
+    def _expand_hypo(self, hypo, limit=0):
+        """Get the best beam size expansions of ``hypo``.
+        
+        Args:
+            hypo (PartialHypothesis): Hypothesis to expand
+        
+        Returns:
+            list. List of child hypotheses
+        """
+        self.set_predictor_states(copy.copy(hypo.predictor_states))
+        if not hypo.word_to_consume is None: # Consume if cheap expand
+            self.consume(hypo.word_to_consume)
+            hypo.word_to_consume = None
+
+        if self.gumbel:
+            posterior, score_breakdown, og_posterior = self.apply_predictors_with_gumbel(hypo.score, hypo.base_score, limit)
+        else:
+            posterior, score_breakdown = self.apply_predictors(limit)
+
+        hypo.predictor_states = self.get_predictor_states()
+        #print('\n')
+        #print(og_posterior)
+
+        new_hypos = [hypo.cheap_expand(
+                        trgt_word,
+                        posterior[trgt_word],
+                        score_breakdown[trgt_word], 
+                        base_score = og_posterior[trgt_word] if self.gumbel else 0
+                        ) for trgt_word in posterior]
+    
+        return new_hypos
+
     
     def _combine_posteriors_norm_none(self,
                                       non_zero_words,
@@ -643,8 +752,13 @@ class Decoder(Observable):
                 unk_probs,
                 pred_weights,
                 top_n=top_n)
-        combined = {}
-        score_breakdown = {}
+
+        combined = {target_word: utils.common_get(posteriors[0],
+                                       target_word, unk_probs[0]) for target_word in non_zero_words}
+
+        score_breakdown = {t: [(k, 1.0)] for t,k in combined.items()}
+        return combined, score_breakdown
+        #CLARA: CLEAN UPPPPPPP
         for trgt_word in non_zero_words:
             preds = [(utils.common_get(posteriors[idx],
                                        trgt_word, unk_probs[idx]), w)

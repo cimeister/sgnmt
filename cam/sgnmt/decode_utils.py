@@ -67,6 +67,7 @@ from cam.sgnmt.decoding.predlimitbeam import PredLimitBeamDecoder
 from cam.sgnmt.decoding.combibeam import CombiBeamDecoder
 from cam.sgnmt.output import TextOutputHandler, \
                              NBestOutputHandler, \
+                             NBestSeparateOutputHandler, \
                              NgramOutputHandler, \
                              TimeCSVOutputHandler, \
                              FSTOutputHandler, \
@@ -331,7 +332,8 @@ def add_predictors(decoder):
                                      _get_override_args("marg_path"),
                                      args.lmbda,
                                      args.ppmi,
-                                     args.epsilon)
+                                     args.epsilon,
+                                     args.fairseq_temperature)
             elif pred == "bracket":
                 p = BracketPredictor(args.syntax_max_terminal_id,
                                      args.syntax_pop_id,
@@ -728,6 +730,8 @@ def create_output_handlers():
             path = args.output_path
         if name == "text":
             outputs.append(TextOutputHandler(path))
+        elif name == "nbest_sep":
+            outputs.append(NBestSeparateOutputHandler(path, args.nbest))
         elif name == "nbest":
             outputs.append(NBestOutputHandler(path, 
                                               utils.split_comma(args.predictors)))
@@ -809,7 +813,8 @@ def get_sentence_indices(range_param, src_sentences):
 def _get_text_output_handler(output_handlers):
     """Returns the text output handler if in output_handlers, or None."""
     for output_handler in output_handlers:
-        if isinstance(output_handler, TextOutputHandler):
+        if isinstance(output_handler, TextOutputHandler)\
+                or isinstance(output_handler, NBestSeparateOutputHandler):
             return output_handler
     return None
 
@@ -920,7 +925,6 @@ def do_decode(decoder,
             start_hypo_time = time.time()
             decoder.apply_predictors_count = 0
             hypos, count = decoder.decode(src)
-            #counts.append(count)
 
             if not hypos:
                 logging.error("No translation found for ID %d!" % (sen_idx+1))
@@ -941,7 +945,10 @@ def do_decode(decoder,
                                         hypos[0].total_score,
                                         decoder.apply_predictors_count,
                                         time.time() - start_hypo_time))
-            print('')
+            if decoder.nbest > 1:
+                logging.info("Diversity: score=%f "
+                          % (utils.ngram_diversity([io.decode(h.trgt_sentence) for h in hypos])))
+            
             all_hypos.append(hypos)
             sen_indices.append(sen_idx)
             try:
@@ -968,6 +975,15 @@ def do_decode(decoder,
                                                        sen_idx+1,
                                                        e,
                                                        traceback.format_exc()))
+            try:
+                # Write text output as we go
+                if text_output_handler:
+                    hypos = [_generate_dummy_hypo(decoder.predictors)]
+                    text_output_handler.write_hypos([hypos])
+            except IOError as e:
+                logging.error("I/O error %d occurred when creating output files: %s"
+                            % (sys.exc_info()[0], e))
+
 
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
     try:

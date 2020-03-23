@@ -160,6 +160,11 @@ def argmax(arr):
     else:
         return numpy.argmax(arr)
 
+def logmexp(x):
+    return numpy.log(1 - numpy.exp(x))
+
+def logpexp(x):
+    return numpy.log(1 + numpy.exp(x))
 
 # Functions for common access to numpy arrays, lists, and dicts
     
@@ -290,6 +295,29 @@ def split_comma(s, func=None):
     if func is None:
         return [el.strip() for el in parts]
     return [func(el.strip()) for el in parts]
+
+
+def ngrams(sen, n):
+    sen = sen.split(' ')
+    output = []
+    for i in range(len(sen)-n+1):
+        output.append(tuple(sen[i:i+n]))
+    return output
+
+def distinct_ngrams(hypos, n):
+    total_ngrams = 0
+    distinct = []
+    for h in hypos:
+        all_ngrams = ngrams(h, n)
+        total_ngrams += len(all_ngrams)
+        distinct.extend(all_ngrams)
+
+    return float(len(set(distinct)))/len(distinct)
+
+def ngram_diversity(hypos):
+    ds = [distinct_ngrams(hypos, i) for i in range(1,5)]
+    return sum(ds)/4.
+
 
 
 MESSAGE_TYPE_DEFAULT = 1

@@ -77,8 +77,13 @@ class DijkstraTSDecoder(Decoder):
         self.initialize_predictors(src_sentence)
         self.initialize_order_ds() 
         self.total_queue_size = 0
+
+        self.time1 = 0
+        self.time2 = 0
+        self.time3 = 0
         
         self.reward_bound(src_sentence)
+        self.backups = []
         while self.queue_order:
             c,t = self.get_next()
             cur_queue = self.queues[t]
@@ -95,40 +100,23 @@ class DijkstraTSDecoder(Decoder):
                 continue
 
             if t == self.max_len:
+                self.backups.append(hypo)
                 self.update(cur_queue, t)
                 continue
 
             next_queue = self.queues[t+1]
-            for next_hypo in self._expand_hypo(hypo):
+            for next_hypo in self._expand_hypo(hypo, self.beam):
                 self.add_hypo(next_hypo, next_queue, t+1)
+                
                     
+            ti = time.time()
             self.update(cur_queue, t)
             self.update(next_queue, t+1)
+            self.time3 += time.time() - ti
         
-        return self.get_full_hypos_sorted(), None
+        print(self.time1, self.time2, self.time3)
+        return self.get_full_hypos_sorted(), (self.time1, self.time2, self.time3)
 
-    def _expand_hypo(self, hypo):
-        """Get the best beam size expansions of ``hypo``.
-        
-        Args:
-            hypo (PartialHypothesis): Hypothesis to expand
-        
-        Returns:
-            list. List of child hypotheses
-        """
-        self.set_predictor_states(copy.copy(hypo.predictor_states))
-        if not hypo.word_to_consume is None: # Consume if cheap expand
-            self.consume(hypo.word_to_consume)
-            hypo.word_to_consume = None
-
-        posterior, score_breakdown = self.apply_predictors(self.beam)
-        hypo.predictor_states = self.get_predictor_states()
-        new_hypos = [hypo.cheap_expand(
-                        trgt_word,
-                        posterior[trgt_word],
-                        score_breakdown[trgt_word]) for trgt_word in posterior]
-    
-        return new_hypos
 
     def initialize_order_ds(self):
         self.queues = [MinMaxHeap() for k in range(self.max_len+1)]
@@ -143,10 +131,16 @@ class DijkstraTSDecoder(Decoder):
         return self.queue_order.popitem()
         
     def update(self, queue, t, forward_prune=False):
-        # remove current best value associated with queue
-        self.queue_order.pop(self.score_by_t[t], default=None)
 
-        # if beam used up at current time step, can prunehypotheses from older time steps
+        # remove current best value associated with queue
+        try:
+            self.queue_order.pop(self.score_by_t[t], default=None)
+        except ValueError as e:
+            print(e)
+            print(t)
+            print(self.queue_order)
+
+        # if beam used up at current time step, can prune hypotheses from older time steps
         if self.time_sync[t] <= 0:
             self.prune(t)
 
@@ -175,6 +169,7 @@ class DijkstraTSDecoder(Decoder):
 
     
     def add_hypo(self, hypo, queue, t):
+        ti = time.time()
         score = self.get_adjusted_score(hypo)
         if len(queue) < self.time_sync[t]:
             queue.insert((-score, hypo))
@@ -186,6 +181,7 @@ class DijkstraTSDecoder(Decoder):
             max_val = queue.peekmax()[0]
             if score > -max_val:
                 queue.replacemax((-score, hypo))
+        self.time2 += time.time() - ti
         
     def remove_one(self):
         """ helper function for memory threshold"""
@@ -198,13 +194,14 @@ class DijkstraTSDecoder(Decoder):
 
     def stop(self):
         if self.not_monotonic:
+            assert self.nbest == 1
             if not self.early_stopping and len(self.full_hypos) < self.beam:
                 return False
             threshold = max(self.full_hypos) if self.early_stopping else min(self.full_hypos)
             if all([threshold.total_score > self.max_pos_score(q.peekmin()[1]) for q in self.queues if q]):
                 return True
         elif self.early_stopping:
-            return True 
+            return len(self.full_hypos) == min(self.beam, self.nbest)
         elif len(self.full_hypos) == self.beam:
             return True
         return False
@@ -244,7 +241,7 @@ class DijkstraTSDecoder(Decoder):
             if self.guido == "local_variance":
                 current_score -= self.lmbda*hypo.get_local_variance()
 
-        return current_score 
+        return round(current_score,10)
 
     def max_pos_score(self, hypo):
         current_score = hypo.score

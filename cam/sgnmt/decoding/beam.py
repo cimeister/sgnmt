@@ -121,31 +121,31 @@ class BeamDecoder(Decoder):
                 return True
         return False
     
-    def _expand_hypo(self, hypo):
-        """Get the best beam size expansions of ``hypo``.
+    # def _expand_hypo(self, hypo):
+    #     """Get the best beam size expansions of ``hypo``.
         
-        Args:
-            hypo (PartialHypothesis): Hypothesis to expand
+    #     Args:
+    #         hypo (PartialHypothesis): Hypothesis to expand
         
-        Returns:
-            list. List of child hypotheses
-        """
-        t = time.time()
-        if hypo.score <= self.min_score:
-            return []
-        self.set_predictor_states(copy.copy(hypo.predictor_states))
-        if not hypo.word_to_consume is None: # Consume if cheap expand
-            self.consume(hypo.word_to_consume)
-            hypo.word_to_consume = None
-        posterior, score_breakdown = self.apply_predictors(self.sub_beam_size)
-        self.count +=1
-        hypo.predictor_states = self.get_predictor_states()
-        hypos = [hypo.cheap_expand(
-                        trgt_word,
-                        posterior[trgt_word],
-                        score_breakdown[trgt_word]) for trgt_word in posterior]
-        self.time += time.time() - t
-        return hypos
+    #     Returns:
+    #         list. List of child hypotheses
+    #     """
+    #     t = time.time()
+    #     if hypo.score <= self.min_score:
+    #         return []
+    #     self.set_predictor_states(copy.copy(hypo.predictor_states))
+    #     if not hypo.word_to_consume is None: # Consume if cheap expand
+    #         self.consume(hypo.word_to_consume)
+    #         hypo.word_to_consume = None
+    #     posterior, score_breakdown = self.apply_predictors(self.sub_beam_size)
+    #     self.count +=1
+    #     hypo.predictor_states = self.get_predictor_states()
+    #     hypos = [hypo.cheap_expand(
+    #                     trgt_word,
+    #                     posterior[trgt_word],
+    #                     score_breakdown[trgt_word]) for trgt_word in posterior]
+    #     self.time += time.time() - t
+    #     return hypos
     
     def _filter_equal_hypos(self, hypos, scores):
         """Apply hypo recombination to the hypotheses in ``hypos``.
@@ -226,7 +226,7 @@ class BeamDecoder(Decoder):
                     next_hypos.append(hypo)
                     next_scores.append(self._get_combined_score(hypo))
                     continue 
-                for next_hypo in self._expand_hypo(hypo):
+                for next_hypo in self._expand_hypo(hypo, self.sub_beam_size):
                     next_score = self._get_combined_score(next_hypo)
                     if next_score > self.min_score:
                         next_hypos.append(next_hypo)

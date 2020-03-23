@@ -108,6 +108,41 @@ class TextOutputHandler(OutputHandler):
         self.f.close()
 
 
+class NBestSeparateOutputHandler(OutputHandler):
+    """Produces n-best files with hypotheses at respecitve positions
+    """
+    
+    def __init__(self, path, N):
+        """
+        Args:
+            path (string):  Path to the n-best file to write
+            N: n-best 
+        """
+        super(NBestSeparateOutputHandler, self).__init__()
+        self.paths = [path + '_' + str(i) + '.txt' for i in range(N)]
+        
+    def write_hypos(self, all_hypos, sen_indices=None):
+        """Writes the hypotheses in ``all_hypos`` to ``path`` """
+        if not self.f:
+            self.open_file()
+        for hypos in all_hypos:
+            while len(hypos) < len(self.f):
+                hypos.append(hypos[-1])
+            for i in range(len(self.f)):
+                self.f[i].write(io.decode(hypos[i].trgt_sentence))
+                self.f[i].write("\n")
+                self.f[i].flush()
+
+    def open_file(self):
+        self.f = []
+        for p in self.paths:
+            self.f.append(codecs.open(p, "w", encoding='utf-8'))
+
+    def close_file(self):
+        for f in self.f:
+            f.close()
+
+
 class NBestOutputHandler(OutputHandler):
     """Produces a n-best file in Moses format. The third part of each 
     entry is used to store the separated unnormalized predictor scores.
@@ -137,6 +172,7 @@ class NBestOutputHandler(OutputHandler):
                 name_count[name] += 1
                 final_name = "%s%d" % (name, name_count[name])
             self.predictor_names.append(final_name.replace("_", "0"))
+        
         
     def write_hypos(self, all_hypos, sen_indices):
         """Writes the hypotheses in ``all_hypos`` to ``path`` """

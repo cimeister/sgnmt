@@ -49,9 +49,9 @@ def _initialize_fairseq(user_dir):
             fairseq_utils.import_user_module(args)
         FAIRSEQ_INITIALIZED = True
 
-def get_fairseq_args(model_path, lang_pair):
+def get_fairseq_args(model_path, lang_pair, temperature):
     parser = options.get_generation_parser()
-    input_args = ["--path", model_path, os.path.dirname(model_path)]
+    input_args = ["--path", model_path, os.path.dirname(model_path), "--temperature", str(temperature)]
     if lang_pair:
         src, trg = lang_pair.split("-")
         input_args.extend(["--source-lang", src, "--target-lang", trg])
@@ -62,7 +62,8 @@ class FairseqPredictor(Predictor):
     """Predictor for using fairseq models."""
 
     def __init__(self, model_path, user_dir, lang_pair, n_cpu_threads=-1, 
-        subtract_uni=False, subtract_marg=False, marg_path=None, lmbda=1.0, ppmi=False, epsilon=0
+        subtract_uni=False, subtract_marg=False, marg_path=None, lmbda=1.0, 
+        ppmi=False, epsilon=0, temperature=1.
         ):
         """Initializes a fairseq predictor.
 
@@ -78,7 +79,7 @@ class FairseqPredictor(Predictor):
         _initialize_fairseq(user_dir)
         self.use_cuda = torch.cuda.is_available() and n_cpu_threads < 0
 
-        args = get_fairseq_args(model_path, lang_pair)
+        args = get_fairseq_args(model_path, lang_pair, temperature)
 
         # Setup task, e.g., translation
         task = tasks.setup_task(args)
@@ -120,6 +121,7 @@ class FairseqPredictor(Predictor):
             self.marg_models = self.load_models(marg_path, task)
             self.marg_model = EnsembleModel(self.marg_models)
             self.marg_model.eval()
+        self.temperature = temperature
 
 
     def load_models(self, model_path, task):
@@ -149,7 +151,7 @@ class FairseqPredictor(Predictor):
         if self.use_cuda:
             inputs = inputs.cuda()
         lprobs, _  = self.model.forward_decoder(
-            inputs, self.encoder_outs
+            inputs, self.encoder_outs, temperature=self.temperature
         )
         lprobs[0, self.pad_id] = utils.NEG_INF
         if self.use_uni_dist:
@@ -161,8 +163,7 @@ class FairseqPredictor(Predictor):
             if self.ppmi:
                 marg_lprobs[0] = torch.clamp(marg_lprobs[0], -self.eps)
             lprobs[0] = lprobs[0] - self.lmbda*marg_lprobs[0]
-
-        return lprobs[0] if self.use_cuda else np.array(lprobs[0])
+        return np.array(lprobs[0].cpu() if self.use_cuda else lprobs[0])
     
     def initialize(self, src_sentence):
         """Initialize source tensors, reset consumed."""
