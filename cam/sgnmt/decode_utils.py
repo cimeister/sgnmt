@@ -921,8 +921,6 @@ def do_decode(decoder,
             decoder.apply_predictors_count = 0
             hypos, count = decoder.decode(src)
             counts.append(count)
-            #hypos = [hypo for hypo in decoder.decode(src)
-                        #if hypo.total_score > args.min_score]
             
             if not hypos:
                 logging.error("No translation found for ID %d!" % (sen_idx+1))
