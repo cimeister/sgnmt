@@ -106,6 +106,20 @@ class Predictor(Observer):
                            ``get_state()``
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def coalesce_and_set_states(self, states):
+        """Loads a predictor state from an object created with 
+        ``get_state()``. Note that this does not copy the argument but
+        just references the given state. If ``state`` is going to be
+        used in the future to return to that point again, you should
+        copy the state with ``copy.deepcopy()`` before.
+        
+        Args:
+           state (object): Predictor state as returned by 
+                           ``get_state()``
+        """
+        raise NotImplementedError
     
     def estimate_future_cost(self, hypo):
         """Predictors can implement their own look-ahead cost functions.

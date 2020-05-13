@@ -1,0 +1,3 @@
+[submodule "python-runstats"]
+	path = python-runstats
+	url = https://github.com/grantjenks/python-runstats.git

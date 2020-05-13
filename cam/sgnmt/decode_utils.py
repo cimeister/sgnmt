@@ -45,6 +45,9 @@ from cam.sgnmt.decoding.core import UnboundedVocabularyPredictor
 from cam.sgnmt.decoding.core import Hypothesis
 from cam.sgnmt.decoding.dijkstra import DijkstraDecoder
 from cam.sgnmt.decoding.dijkstra_time_sync import DijkstraTSDecoder
+from cam.sgnmt.decoding.batch import BatchDecoder
+from cam.sgnmt.decoding.reference import ReferenceDecoder
+from cam.sgnmt.decoding.sampling import SamplingDecoder
 from cam.sgnmt.decoding.dfs import DFSDecoder, \
                                    SimpleDFSDecoder, \
                                    SimpleLengthDFSDecoder
@@ -71,7 +74,8 @@ from cam.sgnmt.output import TextOutputHandler, \
                              NgramOutputHandler, \
                              TimeCSVOutputHandler, \
                              FSTOutputHandler, \
-                             StandardFSTOutputHandler
+                             StandardFSTOutputHandler, \
+                             ScoreOutputHandler
 from cam.sgnmt.predictors.automata import FstPredictor, \
                                          RtnPredictor, \
                                          NondeterministicFstPredictor
@@ -658,6 +662,12 @@ def create_decoder():
             decoder = DijkstraDecoder(args)
         elif args.decoder == "dijkstra_ts":
             decoder = DijkstraTSDecoder(args)
+        elif args.decoder == "batch":
+            decoder = BatchDecoder(args)
+        elif args.decoder == "reference":
+            decoder = ReferenceDecoder(args)
+        elif args.decoder == "sampling":
+            decoder = SamplingDecoder(args)
         else:
             logging.fatal("Decoder %s not available. Please double-check the "
                           "--decoder parameter." % args.decoder)
@@ -748,6 +758,8 @@ def create_output_handlers():
         elif name == "sfst":
             outputs.append(StandardFSTOutputHandler(path,
                                                     args.fst_unk_id))
+        elif name == "score":
+            outputs.append(ScoreOutputHandler(path))
         else:
             logging.fatal("Output format %s not available. Please double-check"
                           " the --outputs parameter." % name)
@@ -818,6 +830,13 @@ def _get_text_output_handler(output_handlers):
             return output_handler
     return None
 
+def _get_score_output_handler(output_handlers):
+    """Returns the text output handler if in output_handlers, or None."""
+    for output_handler in output_handlers:
+        if isinstance(output_handler, ScoreOutputHandler):
+            return output_handler
+    return None
+
 
 def _postprocess_complete_hypos(hypos):
     """This function applies the following operations on the list of
@@ -862,6 +881,11 @@ def _postprocess_complete_hypos(hypos):
     return hypos
 
 
+def perplexity(hypo):
+    score = sum([s[0][0] for s in hypo.score_breakdown])
+    return 2**(-score/len(hypo))
+
+
 def _generate_dummy_hypo(predictors):
     return Hypothesis([utils.UNK_ID], 0.0, [[(0.0, w) for _, w in predictors]]) 
 
@@ -886,7 +910,8 @@ def _apply_per_sentence_predictor_weights(src, decoder):
 
 def do_decode(decoder, 
               output_handlers, 
-              src_sentences):
+              src_sentences,
+              trgt_sentences=None):
     """This method contains the main decoding loop. It iterates through
     ``src_sentences`` and applies ``decoder.decode()`` to each of them.
     At the end, it calls the output handlers to create output files.
@@ -907,10 +932,14 @@ def do_decode(decoder,
     text_output_handler = _get_text_output_handler(output_handlers)
     if text_output_handler:
         text_output_handler.open_file()
+    score_output_handler = _get_score_output_handler(output_handlers)
+
     start_time = time.time()
     logging.info("Start time: %s" % start_time)
     sen_indices = []
-    #counts = []
+    diversity_metrics = []
+    not_full = 0
+
     for sen_idx in get_sentence_indices(args.range, src_sentences):
         decoder.set_current_sen_id(sen_idx)
         try:
@@ -924,8 +953,10 @@ def do_decode(decoder,
             src = io.encode(src)
             start_hypo_time = time.time()
             decoder.apply_predictors_count = 0
-            hypos, count = decoder.decode(src)
-
+            if trgt_sentences:
+                hypos, count = decoder.decode(src, io.encode_trg(trgt_sentences[sen_idx]))
+            else:
+                hypos, count = decoder.decode(src)
             if not hypos:
                 logging.error("No translation found for ID %d!" % (sen_idx+1))
                 logging.info("Stats (ID: %d): score=<not-found> "
@@ -936,18 +967,33 @@ def do_decode(decoder,
                 hypos = [_generate_dummy_hypo(decoder.predictors)]
             
             hypos = _postprocess_complete_hypos(hypos)
+            logged_hypo = hypos[0]
             logging.info("Decoded (ID: %d): %s" % (
                     sen_idx+1,
-                    io.decode(hypos[0].trgt_sentence)))
+                    io.decode(logged_hypo.trgt_sentence)))
             logging.info("Stats (ID: %d): score=%f "
                          "num_expansions=%d "
-                         "time=%.2f" % (sen_idx+1,
-                                        hypos[0].total_score,
+                         "time=%.2f " 
+                         "perplexity=%.2f"% (sen_idx+1,
+                                        logged_hypo.total_score,
                                         decoder.apply_predictors_count,
-                                        time.time() - start_hypo_time))
+                                        time.time() - start_hypo_time,
+                                        perplexity(logged_hypo)))
+            if score_output_handler:
+                try:
+                    score_output_handler.write_score(logged_hypo.score_breakdown)
+                except IOError as e:
+                    logging.error("I/O error %d occurred when creating output files: %s"
+                                % (sys.exc_info()[0], e))
+
             if decoder.nbest > 1:
+                diversity_score = utils.ngram_diversity([io.decode(h.trgt_sentence) for h in hypos])
                 logging.info("Diversity: score=%f "
-                          % (utils.ngram_diversity([io.decode(h.trgt_sentence) for h in hypos])))
+                          % (diversity_score))
+                diversity_metrics.append(diversity_score)
+
+                if len(hypos) < decoder.nbest:
+                    not_full += 1
             
             all_hypos.append(hypos)
             sen_indices.append(sen_idx)
@@ -986,6 +1032,8 @@ def do_decode(decoder,
 
 
     logging.info("Decoding finished. Time: %.2f" % (time.time() - start_time))
+    print(diversity_metrics)
+    print("Total not full:", str(not_full))
     try:
         for output_handler in output_handlers:
             if output_handler == text_output_handler:

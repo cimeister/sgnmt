@@ -22,7 +22,7 @@ https://github.com/fstahlberg/nizza
 import logging
 import os
 import numpy as np
-from scipy.misc import logsumexp
+from scipy.special import logsumexp
 
 from cam.sgnmt import utils
 from cam.sgnmt.predictors.core import Predictor

@@ -49,9 +49,9 @@ def _initialize_fairseq(user_dir):
             fairseq_utils.import_user_module(args)
         FAIRSEQ_INITIALIZED = True
 
-def get_fairseq_args(model_path, lang_pair, temperature):
+def get_fairseq_args(model_path, lang_pair):
     parser = options.get_generation_parser()
-    input_args = ["--path", model_path, os.path.dirname(model_path), "--temperature", str(temperature)]
+    input_args = ["--path", model_path, os.path.dirname(model_path)]
     if lang_pair:
         src, trg = lang_pair.split("-")
         input_args.extend(["--source-lang", src, "--target-lang", trg])
@@ -79,7 +79,7 @@ class FairseqPredictor(Predictor):
         _initialize_fairseq(user_dir)
         self.use_cuda = torch.cuda.is_available() and n_cpu_threads < 0
 
-        args = get_fairseq_args(model_path, lang_pair, temperature)
+        args = get_fairseq_args(model_path, lang_pair)
 
         # Setup task, e.g., translation
         task = tasks.setup_task(args)
@@ -95,32 +95,6 @@ class FairseqPredictor(Predictor):
         self.model = EnsembleModel(self.models)
         self.model.eval()
 
-        assert not subtract_marg & subtract_uni
-        self.use_uni_dist = subtract_uni
-        self.use_marg_dist = subtract_marg
-        assert not ppmi or subtract_marg or subtract_uni
-        
-        self.lmbda = lmbda
-        if self.use_uni_dist:
-            unigram_dist = torch.Tensor(target_dict.count)
-            #change frequency of eos to frequency of '.' so it's more realistic.
-            unigram_dist[self.eos_id] = unigram_dist[target_dict.index('.')]
-            self.log_uni_dist = unigram_dist.cuda() if self.use_cuda else unigram_dist
-            self.log_uni_dist = (self.log_uni_dist/self.log_uni_dist.sum()).log()
-        if self.use_marg_dist:
-            if not marg_path:
-                raise AttributeError("No path (--marg_path) given for marginal model when --subtract_marg used")
-            args = get_fairseq_args(marg_path, lang_pair)
-            self.ppmi = ppmi
-            self.eps = epsilon
-            # Setup task, e.g., translation
-            task = tasks.setup_task(args)
-            assert source_dict == task.source_dictionary
-            assert target_dict == task.target_dictionary
-             # Load ensemble
-            self.marg_models = self.load_models(marg_path, task)
-            self.marg_model = EnsembleModel(self.marg_models)
-            self.marg_model.eval()
         self.temperature = temperature
 
 
@@ -148,22 +122,35 @@ class FairseqPredictor(Predictor):
     def predict_next(self):
         """Call the fairseq model."""
         inputs = torch.LongTensor([self.consumed])
+        
         if self.use_cuda:
             inputs = inputs.cuda()
+
         lprobs, _  = self.model.forward_decoder(
             inputs, self.encoder_outs, temperature=self.temperature
         )
-        lprobs[0, self.pad_id] = utils.NEG_INF
-        if self.use_uni_dist:
-            lprobs[0] = lprobs[0] - self.lmbda*self.log_uni_dist
-        if self.use_marg_dist:
-            marg_lprobs, _ = self.marg_model.forward_decoder(
-                inputs, self.marg_encoder_outs
-            )
-            if self.ppmi:
-                marg_lprobs[0] = torch.clamp(marg_lprobs[0], -self.eps)
-            lprobs[0] = lprobs[0] - self.lmbda*marg_lprobs[0]
+        lprobs[:, self.pad_id] = utils.NEG_INF
         return np.array(lprobs[0].cpu() if self.use_cuda else lprobs[0])
+
+    def predict_next_batch(self, hypos):
+        """Call the fairseq model."""
+        
+        inputs = torch.LongTensor(self.consumed)
+        if self.use_cuda:
+            inputs = inputs.cuda()
+        self.encoder_outs = self.model.reorder_encoder_out(self.encoder_outs, 
+            torch.zeros(inputs.size(0), device=inputs.device, dtype=torch.long))
+
+        lprobs, _  = self.model.forward_decoder(
+            inputs, self.encoder_outs, temperature=self.temperature
+        )
+        lprobs[:, self.pad_id] = utils.NEG_INF
+        if self.use_cuda:
+            lprobs = lprobs.cpu()
+        lprobs_per_hypo = []
+        for i, hypo in enumerate(hypos):
+            lprobs_per_hypo.append(np.array(lprobs[i]))
+        return lprobs_per_hypo
     
     def initialize(self, src_sentence):
         """Initialize source tensors, reset consumed."""
@@ -179,32 +166,15 @@ class FairseqPredictor(Predictor):
             'src_tokens': src_tokens,
             'src_lengths': src_lengths})
         self.consumed = [utils.GO_ID or utils.EOS_ID]
+
         # Reset incremental states
 
         for model in self.models:
             self.model.incremental_states[model] = {}
-        if self.use_marg_dist:
-            self.initialize_marg()
-
-    def initialize_marg(self):
-        """Initialize source tensors, reset consumed."""
-        src_tokens = torch.LongTensor([
-            utils.oov_to_unk([utils.EOS_ID],
-                             self.src_vocab_size)])
-        src_lengths = torch.LongTensor([1])
-        if self.use_cuda:
-            src_tokens = src_tokens.cuda()
-            src_lengths = src_lengths.cuda()
-        self.marg_encoder_outs = self.marg_model.forward_encoder({
-            'src_tokens': src_tokens,
-            'src_lengths': src_lengths})
-        # Reset incremental states
-        for model in self.marg_models:
-            self.marg_model.incremental_states[model] = {}
    
-    def consume(self, word):
+    def consume(self, word, i=None):
         """Append ``word`` to the current history."""
-        self.consumed.append(word)
+        self.consumed.append(word) if i is None else self.consumed[i].append(word)
     
     def get_empty_str_prob(self):
         inputs = torch.LongTensor([[utils.GO_ID or utils.EOS_ID]])
@@ -214,18 +184,27 @@ class FairseqPredictor(Predictor):
         lprobs, _ = self.model.forward_decoder(
             inputs, self.encoder_outs
         )
-        if self.use_uni_dist:
-            lprobs[0] = lprobs[0] - self.lmbda*self.log_uni_dist
-        if self.use_marg_dist:
-            lprobs_marg, _ = self.marg_model.forward_decoder(
-            inputs, self.marg_encoder_outs)
-            eos_prob = (lprobs[0,self.eos_id] - self.lmbda*lprobs_marg[0,self.eos_id]).item()
-            if self.ppmi:
-                return min(eos_prob, 0)
-            return eos_prob
-            
         return lprobs[0,self.eos_id].item()
 
+
+    def get_states(self):
+        ret = []
+        for i in range(len(self.consumed)):
+            ind = torch.LongTensor([i])
+            if self.use_cuda:
+                ind = ind.cuda()
+            
+            ret.append((self.delete_padding(self.consumed[i]), [self.separate_incremental_state(model, ind)\
+                for model in self.models]))
+
+        return ret
+
+    def delete_padding(self, seq):
+        try:
+            del seq[seq.index(self.pad_id):]
+        except ValueError:
+            pass
+        return seq
 
     def get_state(self):
         """The predictor state is the complete history."""
@@ -239,7 +218,54 @@ class FairseqPredictor(Predictor):
         for model, inc_state in zip(self.models, inc_states):
             self.model.incremental_states[model] = inc_state
 
+    def coalesce_and_set_states(self, states):
+        self.consumed = []
+        all_inc_states = []
+        for state in states:
+            consumed, inc_states = state
+            self.consumed.append(copy.copy(consumed) )
+            all_inc_states.append(inc_states)
+        
+        all_inc_states = self._coalesce(len(states), all_inc_states)
+        assert len(all_inc_states) == len(self.models)
+        for model, inc_state in zip(self.models, all_inc_states):
+            self.model.incremental_states[model] = inc_state
+           
+
+    def _coalesce(self, bs, all_inc_states):
+        assert len(all_inc_states) == bs
+        ret = []
+        for i in range(len(self.models)):
+            coalesced_inc_states = {}
+            if all_inc_states[0][i]:
+                for key, state in all_inc_states[0][i].items():
+                    states = {k: torch.cat([s[i][key][k] for s in all_inc_states], 0)\
+                        if state[k] is not None else None for k in state.keys()}
+                    coalesced_inc_states[key] = states
+            ret.append(coalesced_inc_states)
+        return ret
+
     def is_equal(self, state1, state2):
         """Returns true if the history is the same """
         return state1[0] == state2[0]
 
+    def separate_incremental_state(
+        self, model, ind,
+    ):
+        """Reorder buffered internal state (for incremental generation)."""
+        ret_dict = {}
+        incremental_states = self.model.incremental_states[model]
+        if incremental_states is None:
+            return None
+        for key, input_buffer in incremental_states.items():
+            states = {}
+            if input_buffer is not None:
+                for k in input_buffer.keys():
+                    input_buffer_k = input_buffer[k]
+                    if input_buffer_k is not None:
+                        states[k] = input_buffer_k.index_select(0, ind)
+                ret_dict[key] = states
+        return ret_dict
+
+
+    

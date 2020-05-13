@@ -108,11 +108,16 @@ outputs = decode_utils.create_output_handlers()
 
 if args.input_method == 'file':
     if os.access(args.src_test, os.R_OK):
+        trgt = None
+        if args.trgt_test  and os.access(args.trgt_test, os.R_OK):
+            with open(args.trgt_test) as f:
+                trgt = [line.strip() for line in f]
         print(time.time())
         with open(args.src_test) as f:
             decode_utils.do_decode(decoder,
                                    outputs,
-                                   [line.strip() for line in f])
+                                   [line.strip() for line in f],
+                                   trgt)
         print(time.time())
     else:
         logging.fatal("Input file '%s' not readable. Please double-check the "

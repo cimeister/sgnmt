@@ -25,8 +25,7 @@ using a language model.
 
 import logging
 import math
-from scipy.misc import logsumexp
-from scipy.special import gammaln
+from scipy.special import gammaln, logsumexp
 
 from cam.sgnmt import utils
 from cam.sgnmt.misc.trie import SimpleTrie

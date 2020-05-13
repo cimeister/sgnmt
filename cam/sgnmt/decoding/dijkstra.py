@@ -18,11 +18,13 @@
 
 
 import copy
-from heapq import heappush, heappop
 import logging
 
 from cam.sgnmt import utils
 from cam.sgnmt.decoding.core import Decoder, PartialHypothesis
+
+from heapq import heappush, heappop
+from cam.sgnmt.decoding.MinMaxHeap import MinMaxHeap
 
 
 class DijkstraDecoder(Decoder):
@@ -32,12 +34,6 @@ class DijkstraDecoder(Decoder):
         fetched from `decoder_args`:
         
             beam (int): Maximum number of active hypotheses.
-            early_stopping (bool): If this is true, partial hypotheses
-                                   with score worse than the current
-                                   best complete scores are not
-                                   expanded. This applies when nbest is
-                                   larger than one and inadmissible
-                                   heuristics are used
             nbest (int): If this is set to a positive value, we do not
                          stop decoding at the first complete path, but
                          continue search until we collected this many
@@ -51,59 +47,67 @@ class DijkstraDecoder(Decoder):
         """
         super(DijkstraDecoder, self).__init__(decoder_args)
         self.nbest = max(1, decoder_args.nbest)
+        self.use_lower_bound = not self.gumbel
         self.capacity = decoder_args.beam
-        self.early_stopping = decoder_args.early_stopping    
+        self.guidos = utils.split_comma(decoder_args.guido)
+        self.guido_lambdas = utils.split_comma(decoder_args.guido_lambdas, func=float)   
 
     def decode(self, src_sentence):
         """Decodes a single source sentence using A* search. """
+        self.lower_bound = self.get_empty_hypo(src_sentence) if self.use_lower_bound else None 
         self.initialize_predictors(src_sentence)
-        open_set = []
-        best_score = self.get_lower_score_bound()
-        print("Bound:", best_score)
-        heappush(open_set, (0.0,
-                            PartialHypothesis(self.get_predictor_states())))
-        count = 0
-        while open_set:
-            c,hypo = heappop(open_set)
-            count += 1
-            if self.early_stopping and hypo.score < best_score:
-                continue
-            logging.debug("Expand (est=%f score=%f exp=%d best=%f): sentence: %s"
-                          % (-c, 
-                             hypo.score, 
-                             self.apply_predictors_count, 
-                             best_score, 
-                             hypo.trgt_sentence))
-            if hypo.get_last_word() == utils.EOS_ID: # Found best hypothesis
-                if hypo.score > best_score:
-                    logging.debug("New best hypo (score=%f exp=%d): %s" % (
-                            hypo.score,
-                            self.apply_predictors_count,
-                            ' '.join([str(w) for w in hypo.trgt_sentence])))
-                    best_score = hypo.score
+        self.cur_capacity = self.capacity
+        open_set = MinMaxHeap(reserve=self.capacity) if self.capacity > 0 else []
+        self.push(open_set, 0.0, PartialHypothesis(self.get_predictor_states()))
+        hypo = None
+        try:
+            count = 0
+            while open_set:
+                c,hypo = self.pop(open_set)#.popmin()
+                count += 1
+                logging.debug("Expand (est=%f score=%f exp=%d best=%f): sentence: %s"
+                              % (-c, 
+                                 hypo.score, 
+                                 self.apply_predictors_count, 
+                                 self.lower_bound.score if self.lower_bound else utils.NEG_INF, 
+                                 hypo.trgt_sentence))
+                if hypo.get_last_word() == utils.EOS_ID or (self.gumbel and len(hypo) == self.max_len): # Found best hypothesis
+                    hypo.score = self.get_adjusted_score(hypo)
+                    self.add_full_hypo(hypo.generate_full_hypothesis())
+                    if len(self.full_hypos) == self.nbest: # if we have enough hypos
+                        return self.get_full_hypos_sorted(), count
+                    self.cur_capacity -= 1
+                    continue
+
+                for next_hypo in self._expand_hypo(hypo, self.capacity):
+                    score = self.get_adjusted_score(next_hypo)
+                    self.push(open_set, score, next_hypo)
+        except RuntimeError:
+            if not self.full_hypos:
+                hypo.score = self.get_adjusted_score(hypo)
                 self.add_full_hypo(hypo.generate_full_hypothesis())
-                if len(self.full_hypos) >= self.nbest: # if we have enough hypos
-                    return self.get_full_hypos_sorted(), count
-                continue
-            self.set_predictor_states(copy.deepcopy(hypo.predictor_states))
-            if not hypo.word_to_consume is None: # Consume if cheap expand
-                self.consume(hypo.word_to_consume)
-                hypo.word_to_consume = None
-            posterior,score_breakdown = self.apply_predictors()
-            hypo.predictor_states = self.get_predictor_states()
-            for trgt_word in posterior: # Estimate future cost, add to heap
-                next_hypo = hypo.cheap_expand(trgt_word, posterior[trgt_word],
-                                                  score_breakdown[trgt_word])
-                score = next_hypo.score
-                if score > best_score:
-                  # only push if hypothesis can beat lower bound. Saves memory...
-                  heappush(open_set, (-score, next_hypo))
-                  
-            # Limit heap capacity
-            if self.capacity > 0 and len(open_set) > self.capacity:
-                new_open_set = []
-                for _ in range(self.capacity):
-                    heappush(new_open_set, heappop(open_set))
-                open_set = new_open_set
         
         return self.get_full_hypos_sorted(), count
+
+    
+    def push(self, set_, score, hypo):
+        if self.lower_bound and score < self.lower_bound.score:
+            return
+        if isinstance(set_, MinMaxHeap):
+            if set_.size < self.cur_capacity:
+                set_.insert((-score, hypo))
+            else:
+                # only push if hypothesis can beat lower bound.
+                min_score = -set_.peekmax()[0]
+                if score > min_score:
+                    set_.replacemax((-score, hypo))
+        else:
+            heappush(set_, (-score, hypo))
+
+    
+    def pop(self, set_):
+        if isinstance(set_, MinMaxHeap):
+           return set_.popmin()
+        else:
+            return heappop(set_)
+

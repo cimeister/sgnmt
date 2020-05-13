@@ -28,8 +28,8 @@ import re
 import os
 
 
-def encode(src_sentence):
-    """Converts the source sentence in string representation to a
+def encode(sentence, target=False):
+    """Converts a sentence in string representation to a
     sequence of token IDs. Depending on the configuration of this
     module, it applies word maps and/or subword/character segmentation
     on the input. This method calls ``encoder.encode()``.
@@ -40,7 +40,21 @@ def encode(src_sentence):
     Returns:
         List of integers.
     """
-    return encoder.encode(src_sentence)
+    return encoder.encode(sentence)
+
+def encode_trg(trg_sentence):
+    """Converts the target sentence in string representation to a
+    sequence of token IDs. Depending on the configuration of this
+    module, it applies word maps and/or subword/character segmentation
+    on the input. This method calls ``encoder.encode_trg()``.
+
+    Args:
+        trg_sentence (string): A single input sentence
+
+    Returns:
+        List of integers.
+    """
+    return encoder.encode_trg(trg_sentence)
 
 
 def decode(trg_sentence):
@@ -134,6 +148,9 @@ class Encoder(object):
             List of integers.
         """
         raise NotImplementedError
+    
+    def encode_trg(self, trg_sentence):
+        raise NotImplementedError
 
 
 class Decoder(object):
@@ -172,6 +189,10 @@ class WordEncoder(Encoder):
     def encode(self, src_sentence):
         return [src_wmap.get(w, utils.UNK_ID) 
                 for w in src_sentence.split()]
+
+    def encode_trg(self, trg_sentence):
+        return [trg_wmap_rev.get(w, utils.UNK_ID) 
+                for w in trg_sentence.split()]
 
 
 class WordDecoder(Decoder):
@@ -402,6 +423,8 @@ src_wmap = {}
 trg_wmap = {}
 """Target language word map (id -> word)"""
 
+trg_wmap_rev = {}
+
 def src_sentence(src):
     if 'bart' in globals():
         return bart.decode(src)
@@ -459,6 +482,8 @@ def load_trg_wmap(path):
     with open(path) as f:
         trg_wmap = dict(map(lambda e: (int(e[-1]), e[0]),
                         [line.strip().split() for line in f]))
+    global trg_wmap_rev
+    trg_wmap_rev = {v:k for k,v in trg_wmap.items()}
     return trg_wmap
 
 

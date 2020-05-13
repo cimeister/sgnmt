@@ -23,7 +23,7 @@ quirks Python sometimes has.
 from abc import abstractmethod
 import numpy
 import operator
-from scipy.misc import logsumexp
+from scipy.special import logsumexp
 from subprocess import call
 from shutil import copyfile
 import logging
@@ -145,6 +145,25 @@ def argmax_n(arr, n):
     return numpy.argpartition(arr, -n)[-n:]
 
 
+def max(arr):
+    """Get indices of the ``n`` maximum entries in ``arr``. The 
+    parameter ``arr`` can be a dictionary. The returned index set is 
+    not guaranteed to be sorted.
+    
+    Args:
+        arr (list,array,dict):  Set of numerical values
+        n  (int):  Number of values to retrieve
+    
+    Returns:
+        List of indices or keys of the ``n`` maximum entries in ``arr``
+    """
+    if isinstance(arr, dict):
+        return max(arr.values())
+    if isinstance(arr, list):
+        return max(arr)
+    return numpy.max(arr)
+
+
 def argmax(arr):
     """Get the index of the maximum entry in ``arr``. The parameter can
     be a dictionary.
@@ -165,6 +184,14 @@ def logmexp(x):
 
 def logpexp(x):
     return numpy.log(1 + numpy.exp(x))
+
+def softmax(x):
+    e_x = numpy.exp(x - numpy.max(x))
+    masked_sum = numpy.ma.masked_invalid(e_x).sum()
+    return e_x / masked_sum
+
+def log_softmax(x):
+	return x - logsumexp(numpy.ma.masked_invalid(x))
 
 # Functions for common access to numpy arrays, lists, and dicts
     

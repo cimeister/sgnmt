@@ -86,30 +86,16 @@ class BeamDecoder(Decoder):
             self.stop_criterion = self._all_eos
         self.pure_heuristic_scores = decoder_args.pure_heuristic_scores
         self.reward = None #1.3
-        self.lmbda = decoder_args.lmbda
-    
-    def _get_combined_score(self, hypo, stop_test=False):
-        """Combines hypo score with future cost estimates.""" 
-        score = hypo.score
-        score -= self.lmbda*hypo.get_score_variance()
-        # score -= self.lmbda*hypo.get_score_max()
-        # score -= self.lmbda*hypo.get_local_variance()
-        return score 
-    # def _get_combined_score(self, hypo, stop_test=False):
-    #     """Combines hypo score with future cost estimates.""" 
-    #     est_score = -self.estimate_future_cost(hypo)
-    #     if not self.pure_heuristic_scores:
-    #         return est_score + hypo.score
-    #     if self.reward:
-    #         factor = min(self.l, len(hypo)) if not stop_test\
-    #             or hypo.get_last_word() == utils.EOS_ID else self.l
-    #         est_score += self.reward*factor
-    #     return est_score 
 
+    
+    def _get_combined_score(self, hypo):
+        """Combines hypo score with future cost estimates.""" 
+        return hypo.score
+    
     def _best_eos(self, hypos):
         """Returns true if the best hypothesis ends with </S>"""
         if self.reward:
-            ln_scores = [self._get_combined_score(hypo, stop_test=True) for hypo in hypos]
+            ln_scores = [self._get_combined_score(hypo) for hypo in hypos]
             return hypos[np.argsort(ln_scores)[-1]].get_last_word() != utils.EOS_ID
             
         return hypos[0].get_last_word() != utils.EOS_ID
@@ -121,31 +107,7 @@ class BeamDecoder(Decoder):
                 return True
         return False
     
-    # def _expand_hypo(self, hypo):
-    #     """Get the best beam size expansions of ``hypo``.
-        
-    #     Args:
-    #         hypo (PartialHypothesis): Hypothesis to expand
-        
-    #     Returns:
-    #         list. List of child hypotheses
-    #     """
-    #     t = time.time()
-    #     if hypo.score <= self.min_score:
-    #         return []
-    #     self.set_predictor_states(copy.copy(hypo.predictor_states))
-    #     if not hypo.word_to_consume is None: # Consume if cheap expand
-    #         self.consume(hypo.word_to_consume)
-    #         hypo.word_to_consume = None
-    #     posterior, score_breakdown = self.apply_predictors(self.sub_beam_size)
-    #     self.count +=1
-    #     hypo.predictor_states = self.get_predictor_states()
-    #     hypos = [hypo.cheap_expand(
-    #                     trgt_word,
-    #                     posterior[trgt_word],
-    #                     score_breakdown[trgt_word]) for trgt_word in posterior]
-    #     self.time += time.time() - t
-    #     return hypos
+
     
     def _filter_equal_hypos(self, hypos, scores):
         """Apply hypo recombination to the hypotheses in ``hypos``.

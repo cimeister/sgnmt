@@ -107,6 +107,37 @@ class TextOutputHandler(OutputHandler):
     def close_file(self):
         self.f.close()
 
+class ScoreOutputHandler(OutputHandler):
+    """Writes the first best hypotheses to a plain text file """
+    
+    def __init__(self, path):
+        """Creates a plain text output handler to write to ``path`` """
+        super(ScoreOutputHandler, self).__init__()
+        self.path = path
+        self.open_file()
+        
+    def write_score(self, score):
+        """Writes the hypotheses in ``all_hypos`` to ``path`` """
+        def write(f_, score):
+            f_.write(str([s[0][0] for s in score]))
+            f_.write("\n")
+            f_.flush()
+
+        if self.f is not None:
+            write(self.f, score)
+        else:
+            with codecs.open(self.path, "w", encoding='utf-8') as f:
+                write(f, score)
+
+    def write_hypos(self, all_hypos, sen_indices=None):
+        pass
+
+    def open_file(self):
+        self.f = codecs.open(self.path, "w", encoding='utf-8')
+
+    def close_file(self):
+        self.f.close()
+
 
 class NBestSeparateOutputHandler(OutputHandler):
     """Produces n-best files with hypotheses at respecitve positions

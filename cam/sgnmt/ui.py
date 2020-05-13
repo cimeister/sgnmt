@@ -213,6 +213,11 @@ def get_parser():
                         "a plain text file with one source sentence in each "
                         "line. Words need to be indexed, i.e. use word IDs "
                         "instead of their string representations.")
+    group.add_argument("--trgt_test", default="",
+                        help="Path to source test set. This is expected to be "
+                        "a plain text file with one source sentence in each "
+                        "line. Words need to be indexed, i.e. use word IDs "
+                        "instead of their string representations.")
     group.add_argument("--indexing_scheme", default="fairseq",
                         choices=['t2t', 'fairseq'],
                         help="This parameter defines the reserved IDs.\n\n"
@@ -277,7 +282,10 @@ def get_parser():
                                  'bigramgreedy',
                                  'astar',
                                  'dijkstra',
-                                 'dijkstra_ts'],
+                                 'dijkstra_ts',
+                                 'batch',
+                                 'reference',
+                                 'sampling'],
                         help="Strategy for traversing the search space which "
                         "is spanned by the predictors.\n\n"
                         "* 'greedy': Greedy decoding (similar to beam=1)\n"
@@ -421,9 +429,6 @@ def get_parser():
                         "A* score hypotheses with the sum of the partial hypo "
                         "score plus the heuristic estimates (lik in standard "
                         "A*). Set to true to use the heuristic estimates only")
-    group.add_argument("--lmbda", default=0., type=float,
-                        help="weight of LM when decoding with PMI. Should be "
-                        "between 0 and 1.0")
     group.add_argument("--restarting_node_score", default="difference",
                         choices=['difference',
                                  'absolute',
@@ -580,9 +585,9 @@ def get_parser():
                         help="total queue size will be set to `memory_threshold_coef`"
                          "* beam size. When capacity is exceeded, the worst scoring "
                          "hypothesis from the earliest time step will be discarded")
-    group.add_argument("--guido", default=None, choices=['variance', 'max',
-                        'max2', 'local_variance'],
-                        help="for guido decoding")
+    group.add_argument("--guido", default="",
+                        help="for guido decoding; comma separated list 'variance', 'max',"
+                        "'max2', 'local_variance'")
     group.add_argument("--store_by_pos", action='store_true',
                         help="Stores all hypotheses by their ranking; outputs"
                         "different stream for each ranking")
@@ -591,6 +596,14 @@ def get_parser():
                         "random sampling")
     group.add_argument('--fairseq_temperature', default=1., type=float, metavar='N',
                        help='temperature for generation')
+    group.add_argument('--temperature', default=1., type=float, metavar='N',
+                       help='temperature for generation')
+    group.add_argument("--lmbda", default=0., type=float,
+                        help="weight of LM when decoding with PMI. Should be "
+                        "between 0 and 1.0")
+    group.add_argument("--guido_lambdas", default="",
+                        help="for guido decoding; comma separated list for weights"
+                        "during guido decoding")
 
     ## Output options
     group = parser.add_argument_group('Output options')

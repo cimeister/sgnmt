@@ -69,10 +69,12 @@ class DijkstraTSDecoder(Decoder):
         self.size_threshold = self.beam*decoder_args.memory_threshold_coef\
             if decoder_args.memory_threshold_coef > 0 else utils.INF
 
-        self.guido = decoder_args.guido
-        if self.guido in ['variance', 'local_variance']:
+        self.guidos = utils.split_comma(decoder_args.guido)
+        self.guido_lambdas = utils.split_comma(decoder_args.guido_lambdas, func=float)
+        if any(g in ['variance', 'local_variance'] for g in self.guidos):
             self.not_monotonic = True
-        
+
+
     def decode(self, src_sentence):
         self.initialize_predictors(src_sentence)
         self.initialize_order_ds() 
@@ -83,7 +85,6 @@ class DijkstraTSDecoder(Decoder):
         self.time3 = 0
         
         self.reward_bound(src_sentence)
-        self.backups = []
         while self.queue_order:
             c,t = self.get_next()
             cur_queue = self.queues[t]
@@ -100,15 +101,13 @@ class DijkstraTSDecoder(Decoder):
                 continue
 
             if t == self.max_len:
-                self.backups.append(hypo)
                 self.update(cur_queue, t)
                 continue
 
-            next_queue = self.queues[t+1]
+            next_queue = self.queues[t+1]            
             for next_hypo in self._expand_hypo(hypo, self.beam):
                 self.add_hypo(next_hypo, next_queue, t+1)
                 
-                    
             ti = time.time()
             self.update(cur_queue, t)
             self.update(next_queue, t+1)
@@ -131,21 +130,15 @@ class DijkstraTSDecoder(Decoder):
         return self.queue_order.popitem()
         
     def update(self, queue, t, forward_prune=False):
-
         # remove current best value associated with queue
-        try:
-            self.queue_order.pop(self.score_by_t[t], default=None)
-        except ValueError as e:
-            print(e)
-            print(t)
-            print(self.queue_order)
+        self.queue_order.pop(self.score_by_t[t], default=None)
 
-        # if beam used up at current time step, can prune hypotheses from older time steps
+        #if beam used up at current time step, can prune hypotheses from older time steps
         if self.time_sync[t] <= 0:
             self.prune(t)
 
         #replace with next best value if anything left in queue
-        elif len(queue) > 0:
+        if len(queue) > 0:
             self.queue_order[-queue.peekmin()[0]] = t
             self.score_by_t[t] = -queue.peekmin()[0]
 
@@ -166,11 +159,12 @@ class DijkstraTSDecoder(Decoder):
         for i in range(t+1):
             self.queue_order.pop(self.score_by_t[i], default=None)
             self.queues[i] = []
-
     
     def add_hypo(self, hypo, queue, t):
         ti = time.time()
         score = self.get_adjusted_score(hypo)
+        if score == utils.NEG_INF:
+            return
         if len(queue) < self.time_sync[t]:
             queue.insert((-score, hypo))
             if self.total_queue_size >= self.size_threshold:
@@ -178,11 +172,26 @@ class DijkstraTSDecoder(Decoder):
             else:
                 self.total_queue_size += 1
         else:
-            max_val = queue.peekmax()[0]
-            if score > -max_val:
+            min_score = -queue.peekmax()[0]
+            if score > min_score:
                 queue.replacemax((-score, hypo))
         self.time2 += time.time() - ti
         
+    def remove_one2(self):
+        """ helper function for memory threshold"""
+        m, i = utils.INF, 0
+        for t, q in enumerate(self.queues):
+            if len(q) > 0:
+                min_score = -q.peekmax()[0]
+                if min_score < m: 
+                    i = t
+                    m = min_score
+        q = self.queues[i]
+        q.popmax()
+        if len(q) == 0:
+            self.queue_order.pop(self.score_by_t[t], default=None)
+        return
+
     def remove_one(self):
         """ helper function for memory threshold"""
         for t, q in enumerate(self.queues):
@@ -194,11 +203,10 @@ class DijkstraTSDecoder(Decoder):
 
     def stop(self):
         if self.not_monotonic:
-            assert self.nbest == 1
             if not self.early_stopping and len(self.full_hypos) < self.beam:
                 return False
             threshold = max(self.full_hypos) if self.early_stopping else min(self.full_hypos)
-            if all([threshold.total_score > self.max_pos_score(q.peekmin()[1]) for q in self.queues if q]):
+            if all([threshold.total_score > self.max_pos_score(h[1]) for q in self.queues if q for h in q.a]):
                 return True
         elif self.early_stopping:
             return len(self.full_hypos) == min(self.beam, self.nbest)
@@ -213,48 +221,19 @@ class DijkstraTSDecoder(Decoder):
         elif self.reward_type == "max":
             self.l = self.max_len
         
-    def get_adjusted_score(self, hypo):
-        """Combines hypo score with future cost estimates.""" 
-        current_score =  hypo.score
-        if self.reward_type: 
-            factor =  min(self.l, len(hypo))
-            current_score += self.reward_coef*factor
-            if self.heuristics:
-                if hypo.get_last_word() != utils.EOS_ID:
-                        potential = max(self.l - len(hypo.trgt_sentence),0) 
-                        current_score += self.reward_coef*potential
-        elif self.heuristics:
-            if hypo.get_last_word() != utils.EOS_ID:
-                remaining = self.max_len - len(hypo.trgt_sentence) 
-                current_score += self.lmbda*self.epsilon*remaining
-
-        elif self.guido:
-            if self.guido == "variance":
-                current_score -= self.lmbda*hypo.get_score_variance()
-
-            if self.guido == "max":
-                current_score -= self.lmbda*hypo.get_score_max()
-
-            if self.guido == "max2":
-                current_score -= self.lmbda*hypo.get_score_max2(self.epsilon)
-
-            if self.guido == "local_variance":
-                current_score -= self.lmbda*hypo.get_local_variance()
-
-        return round(current_score,10)
 
     def max_pos_score(self, hypo):
         current_score = hypo.score
-        if self.guido:
-            if self.guido == "variance":
-                var = self.lmbda*hypo.get_score_variance()
+        for w,g in zip(self.guido_lambdas, self.guidos):
+            if g == "variance":
+                var = w*hypo.get_score_variance()
                 lowest_var = var*len(hypo)/self.max_len
                 current_score -= lowest_var
-            if self.guido == "local_variance":
-                var = self.lmbda*hypo.get_local_variance()
+            elif g == "local_variance":
+                var = w*hypo.get_local_variance()
                 lowest_var = var*len(hypo)/self.max_len
                 current_score -= lowest_var
-        elif self.lmbda:
+        if self.lmbda:
             max_increase = self.lmbda*self.epsilon*(self.max_len - len(hypo))\
                 if hypo.get_last_word() != utils.EOS_ID else 0
             current_score += max_increase
