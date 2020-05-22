@@ -177,8 +177,6 @@ class PartialHypothesis(object):
 
     # GUIDOs
     def get_score_variance(self, val=None):
-        if len(self.score_breakdown) < 2:
-            return 1
         if val is not None:
             return self.statistics.pos_variance(val,ddof=0) 
         return self.statistics.variance(ddof=0)
@@ -195,10 +193,8 @@ class PartialHypothesis(object):
         return utils.INF
 
     def get_local_variance(self, val=None):
-        if val is not None and len(self.score_breakdown) > 0:
+        if val is not None:
             return self.statistics.pos_local_variance(val,ddof=0) 
-        if len(self.score_breakdown) < 2:
-            return 1
         return self.statistics.local_variance(ddof=0) 
         
     def get_score_greedy(self, val=None):
@@ -814,6 +810,9 @@ class Decoder(Observable):
                 elif g == "greedy":
                     current_score -= w*hypo.get_score_greedy((val, max_))
 
+        if getattr(self, 'length_norm', False): 
+            current_score /= (len(hypo) +1)
+
         return current_score
 
     def get_adjusted_score(self, hypo):
@@ -836,7 +835,7 @@ class Decoder(Observable):
         elif getattr(self, 'length_norm', False): 
             current_score /= len(hypo)
 
-        elif hasattr(self, 'guidos'):
+        elif getattr(self, 'guidos', False):
             for w, g in zip(self.guido_lambdas, self.guidos):
                 if g == "variance":
                     current_score -= w*hypo.get_score_variance()

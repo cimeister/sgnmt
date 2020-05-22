@@ -60,33 +60,28 @@ class DijkstraDecoder(Decoder):
         open_set = MinMaxHeap(reserve=self.capacity) if self.capacity > 0 else []
         self.push(open_set, 0.0, PartialHypothesis(self.get_predictor_states()))
         hypo = None
-        try:
-            count = 0
-            while open_set:
-                c,hypo = self.pop(open_set)#.popmin()
-                count += 1
-                logging.debug("Expand (est=%f score=%f exp=%d best=%f): sentence: %s"
-                              % (-c, 
-                                 hypo.score, 
-                                 self.apply_predictors_count, 
-                                 self.lower_bound.score if self.lower_bound else utils.NEG_INF, 
-                                 hypo.trgt_sentence))
-                if hypo.get_last_word() == utils.EOS_ID or (self.gumbel and len(hypo) == self.max_len): # Found best hypothesis
-                    hypo.score = self.get_adjusted_score(hypo)
-                    self.add_full_hypo(hypo.generate_full_hypothesis())
-                    if len(self.full_hypos) == self.nbest: # if we have enough hypos
-                        return self.get_full_hypos_sorted(), count
-                    self.cur_capacity -= 1
-                    continue
-
-                for next_hypo in self._expand_hypo(hypo, self.capacity):
-                    score = self.get_adjusted_score(next_hypo)
-                    self.push(open_set, score, next_hypo)
-        except RuntimeError:
-            if not self.full_hypos:
+        count = 0
+        while open_set:
+            c,hypo = self.pop(open_set)#.popmin()
+            count += 1
+            logging.debug("Expand (est=%f score=%f exp=%d best=%f): sentence: %s"
+                          % (-c, 
+                             hypo.score, 
+                             self.apply_predictors_count, 
+                             self.lower_bound.score if self.lower_bound else utils.NEG_INF, 
+                             hypo.trgt_sentence))
+            if hypo.get_last_word() == utils.EOS_ID or (self.gumbel and len(hypo) == self.max_len): # Found best hypothesis
                 hypo.score = self.get_adjusted_score(hypo)
                 self.add_full_hypo(hypo.generate_full_hypothesis())
-        
+                if len(self.full_hypos) == self.nbest: # if we have enough hypos
+                    return self.get_full_hypos_sorted(), count
+                self.cur_capacity -= 1
+                continue
+
+            for next_hypo in self._expand_hypo(hypo, self.capacity):
+                score = self.get_adjusted_score(next_hypo)
+                self.push(open_set, score, next_hypo)
+
         return self.get_full_hypos_sorted(), count
 
     

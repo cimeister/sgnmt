@@ -604,6 +604,8 @@ def get_parser():
     group.add_argument("--guido_lambdas", default="",
                         help="for guido decoding; comma separated list for weights"
                         "during guido decoding")
+    group.add_argument("--length_norm", action='store_true',
+                        help="Normalize by hypothesis length during decoding")
 
     ## Output options
     group = parser.add_argument_group('Output options')

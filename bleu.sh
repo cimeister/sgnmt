@@ -24,4 +24,4 @@ done
 head -n $N $ref > "tmp"
 head -n $N $filename | perl scripts/detokenizer.perl -l en > "out"
 
-cat out | sacrebleu --width 2 tmp
+cat out | sacrebleu --width 4 tmp

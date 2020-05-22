@@ -18,12 +18,13 @@ from ray.tune.suggest.bayesopt import BayesOptSearch
 
 
 def detokenize(f):
-    with MosesDetokenizer('en') as detokenize:
+    with MosesDetokenizer('fr') as detokenize:
         lines = list(open(f))
         return [detokenize(s.split()) for s in lines]
 
 #REFS = [r.rstrip('\n') for r in list(open('data/iwslt_data/valid.detok.en'))]
-REFS = detokenize('data/wmt14.en-fr.fconv-py/valid.fr')
+#REFS = detokenize('data/wmt14.en-fr.fconv-py/valid.fr')
+REFS = [r.rstrip('\n') for r in list(open('data/newstest/test.detok.fr'))]
 
 # DEFAULT_ARGS = ("--fairseq_path /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.fconv-py/model.pt"
 #     " --fairseq_lang_pair en-fr --src_wmap /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.fconv-py/wmap.bpe.en"
@@ -32,40 +33,47 @@ REFS = detokenize('data/wmt14.en-fr.fconv-py/valid.fr')
 #     "--preprocessing word --postprocessing bpe@@ --decoder dijkstra_ts --beam 20 "
 #     "--guido variance --outputs text")
 
-DEFAULT_ARGS = ("--fairseq_path /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.joined-dict.transformer/model.pt"
-    " --fairseq_lang_pair en-fr --src_wmap /home/meistecl/Documents/repositories/sgnmt/data//wmt14.en-fr.joined-dict.transformer//wmap.bpe.en"
-    " --trg_wmap /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.joined-dict.transformer/wmap.bpe.fr --input_method file"
-    " --src_test /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.fconv-py/valid.bpe.en "
-    "--preprocessing word --postprocessing bpe@@ --outputs text --guido greedy")
+# DEFAULT_ARGS = ("--fairseq_path /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.joined-dict.transformer/model.pt"
+#     " --fairseq_lang_pair en-fr --src_wmap /home/meistecl/Documents/repositories/sgnmt/data//wmt14.en-fr.joined-dict.transformer//wmap.bpe.en"
+#     " --trg_wmap /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.joined-dict.transformer/wmap.bpe.fr --input_method file"
+#     " --src_test /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.fconv-py/valid.bpe.en "
+#     "--preprocessing word --postprocessing bpe@@ --outputs text --decoder batch --beam 200")
 
 # DEFAULT_ARGS = ("--fairseq_path /home/meistecl/Documents/repositories/sgnmt/data/ckpts/iwslt/cond_model.pt "
 #     "--fairseq_lang_pair de-en --src_wmap /home/meistecl/Documents/repositories/sgnmt/data/wmaps/wmap.iwslt.de "
 #     "--trg_wmap /home/meistecl/Documents/repositories/sgnmt/data/wmaps/wmap.iwslt.en --input_method file "
 #     "--src_test /home/meistecl/Documents/repositories/sgnmt/data/iwslt_data/valid.de "
-#     "--preprocessing word --postprocessing bpe@@ --decoder dijkstra_ts --guido max --outputs text")
+#     "--preprocessing word --postprocessing bpe@@ --decoder batch --outputs text") #
 
-NUM_GENERATE = 500
+DEFAULT_ARGS = ("--fairseq_path /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.joined-dict.transformer/model.pt"
+    " --fairseq_lang_pair en-fr --src_wmap /home/meistecl/Documents/repositories/sgnmt/data//wmt14.en-fr.joined-dict.transformer//wmap.bpe.en"
+    " --trg_wmap /home/meistecl/Documents/repositories/sgnmt/data/wmt14.en-fr.joined-dict.transformer/wmap.bpe.fr --input_method file"
+    " --src_test /home/meistecl/Documents/repositories/sgnmt/data/newstest/newtest.bpe.en"
+    " --preprocessing word --postprocessing bpe@@ --outputs text --decoder batch")
+
+NUM_GENERATE = 1000
 
 def objective(config, reporter):
     
 
-    lv = str(config["lambda"])
+    # lv = str(round(config["local_variance"],2))
+    # max1 = str(round(config["max"],2))
+    # var = str(round(config["variance"],2))
+    # greedy = str(round(config["greedy"],2))
+    guido, lmbda = tuple(map(str, config["guido"].split(',')))
     beam = str(config["beam"])
-    #max1 = str(round(config["max"],2))
-    #var = str(round(config["variance"],2))
-    #max2 = str(round(config["max2"],2))
 
-    filename = "/home/meistecl/Documents/repositories/sgnmt/bayes_opt_greedy_" + beam + '_' + lv + ".txt"
+    filename = "/home/meistecl/Documents/repositories/sgnmt/wmt_test_" +guido + "_b" + beam + "_"+ lmbda +".txt" #+ greedy +"_" + lv + "_" + max1 + "_" + var + ".txt"
     out = []
     def run(start=0):
         range_str = str(start+1) + ":" + str(NUM_GENERATE)
         parser = get_parser()
         input_args = DEFAULT_ARGS.split(' ')
         input_args.extend(["--output_path", filename])
-        input_args.extend(["--guido_lambdas", lv]) #','.join([lv, max1 , var, max2])])
-        input_args.extend(["--beam", beam ])
+        input_args.extend(["--guido", guido]) #"greedy,local_variance, max, variance"
+        input_args.extend(["--guido_lambdas", lmbda]) # ','.join([greedy, lv, max1 , var])
         input_args.extend(["--range", range_str ])
-        input_args.extend(["--decoder", "batch"])
+        input_args.extend(["--beam", beam ])
         
         args = parser.parse_args(input_args)
         decode_utils.base_init(args)
@@ -96,8 +104,8 @@ def objective(config, reporter):
 if __name__ == "__main__":
     ray.init(num_gpus=torch.cuda.device_count())
 
-    #space = {"local_variance": (0, 20), "variance": (0, 30), "max": (0,10), "max2": (0.3, 10)}
-    space = { "greedy": (0, 1000)}
+    space = {"local_variance": (0, 10), "variance": (0, 12), "max": (0,10), "greedy": (0, 10)}
+    
 
     config = {
         "num_samples": 50,
@@ -118,17 +126,20 @@ if __name__ == "__main__":
     # scheduler = AsyncHyperBandScheduler(metric="mean_accuracy", mode="max")
 
     # analysis = run(objective,
-    #     name="guidos_greedy_5000",
+    #     name="guidos_all_200",
     #     search_alg=algo,
     #     scheduler=scheduler,
     #     resources_per_trial= {
-    #             "cpu": 1,
+    #             "cpu": 2,
     #             "gpu": 1},
     #     #raise_on_failed_trial=False,
     #     **config)
 
     analysis = run(objective,
-        config={"lambda":  grid_search(list(range(2,40,3))), "beam": grid_search([500,100,50,20])},
+        config={"beam": grid_search([500, 100, 50, 20, 10,5,3]), #"lambda":  grid_search([0.2,0.5,0.7,1,2,3,5,7,9,11]),
+        "guido": grid_search(["max,1", "max,2", "max,3", 
+            "local_variance,4","local_variance,5", "local_variance,6",
+            "variance,1",  "variance,2"])},
         resources_per_trial= {
                 "cpu": 2,
                 "gpu": 1},

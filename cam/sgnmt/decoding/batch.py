@@ -66,7 +66,7 @@ class BatchDecoder(Decoder):
         self.size_threshold = self.beam*decoder_args.memory_threshold_coef\
             if decoder_args.memory_threshold_coef > 0 else utils.INF
 
-        self.length_norm = False
+        self.length_norm = decoder_args.length_norm
 
         self.guidos = utils.split_comma(decoder_args.guido)
         self.guido_lambdas = utils.split_comma(decoder_args.guido_lambdas, func=float)
@@ -112,6 +112,7 @@ class BatchDecoder(Decoder):
                 break
             self.queue = self._expand_hypo_batch(batched_hypos, next_hypos, self.beam)
                 
+
         for _, hypo in self.queue:
             if hypo.get_last_word() == utils.EOS_ID or len(hypo) == self.max_len:
                 hypo.score = self.get_adjusted_score(hypo)
@@ -132,7 +133,7 @@ class BatchDecoder(Decoder):
                 return False
             hypo = self.queue.peekmin()[1]
             if hypo.get_last_word() == utils.EOS_ID:
-                if self.not_monotonic and any([self.get_adjusted_score(hypo) > self.max_pos_score(h) for h in self.queue]):
+                if self.not_monotonic and any([self.get_adjusted_score(hypo) < self.max_pos_score(h) for h in self.queue]):
                     return False
                 return True 
 
@@ -183,7 +184,6 @@ class BatchDecoder(Decoder):
             list. List of child hypotheses
         """
        
-        comp_func = self.max_pos_score if self.not_monotonic else self.get_adjusted_score
         all_new_hypos = next_hypos if next_hypos else MinMaxHeap(reserve=limit)
         max_batch_size = 500
         num_batches = int(math.ceil(len(hypos)/max_batch_size))  
@@ -209,19 +209,18 @@ class BatchDecoder(Decoder):
                 vf = np.vectorize(lambda x: self.get_pos_score(hypo, x, max_score))
                 scores = vf(posterior)
                 for k, (trgt_word, pos_score) in enumerate(zip(words, scores)):
-                    #pos_score = self.get_pos_score(hypo, posterior[trgt_word])
                     if len(all_new_hypos) < limit or pos_score > -all_new_hypos.peekmax()[0]:
                         
                         new_hypo = hypo.cheap_expand(
                                     trgt_word,
                                     posterior[k],
                                     score_breakdown[trgt_word], 
-                                    # base_score = og_posterior[trgt_word] if self.gumbel else 0,
                                     max_score=max_score)
+                        
                         if len(all_new_hypos) < limit:
-                            all_new_hypos.insert((-self.get_adjusted_score(new_hypo), new_hypo))
+                            all_new_hypos.insert((-pos_score, new_hypo))
                         else:
-                            all_new_hypos.replacemax((-self.get_adjusted_score(new_hypo), new_hypo))
+                            all_new_hypos.replacemax((-pos_score, new_hypo))
                     
         
         return all_new_hypos
