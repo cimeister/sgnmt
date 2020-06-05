@@ -202,6 +202,11 @@ class PartialHypothesis(object):
             val, cur_max = val
             return self.statistics.pos_max_offset(val, cur_max) 
         return self.statistics.max_offset()
+
+    def get_squares(self, val=None):
+        if val is not None:
+            return self.statistics.pos_squares(val) 
+        return self.statistics.squares() 
         
 
 """The ``CLOSED_VOCAB_SCORE_NORM_*`` constants define the normalization
@@ -810,6 +815,9 @@ class Decoder(Observable):
                 elif g == "greedy":
                     current_score -= w*hypo.get_score_greedy((val, max_))
 
+                elif g == "square":
+                    current_score -= w*hypo.get_squares(val)
+
         if getattr(self, 'length_norm', False): 
             current_score /= (len(hypo) +1)
 
@@ -851,6 +859,9 @@ class Decoder(Observable):
 
                 elif g == "greedy":
                     current_score -= w*hypo.get_score_greedy()
+
+                elif g == "square":
+                    current_score -= w*hypo.get_squares()
 
         return current_score
 

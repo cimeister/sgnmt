@@ -204,8 +204,7 @@ class BeamDecoder(Decoder):
                 self.add_full_hypo(hypo.generate_full_hypothesis()) 
         if not self.full_hypos:
             logging.warn("No complete hypotheses found for %s" % src_sentence)
-            for hypo in hypos:
-                self.add_full_hypo(hypo.generate_full_hypothesis())
+            
         if self.reward:
             for h in self.full_hypos:
                 h.total_score += self.reward*min(self.l, len(h))
